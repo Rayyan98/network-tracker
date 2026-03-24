@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Tracker</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+</head>
+<body>
+    <h1>Network Tracker</h1>
+
+    <!-- Quality Score + Status Bar -->
+    <div class="top-bar">
+        <div class="quality-score-box" id="quality-box">
+            <div class="quality-number" id="quality-number">--</div>
+            <div class="quality-label">Quality Score</div>
+        </div>
+        <div class="use-cases" id="use-cases">
+            <div class="use-case" id="uc-hd_video_call"><span class="uc-dot"></span>HD Video Call</div>
+            <div class="use-case" id="uc-audio_call"><span class="uc-dot"></span>Audio Call</div>
+            <div class="use-case" id="uc-screen_sharing"><span class="uc-dot"></span>Screen Sharing</div>
+            <div class="use-case" id="uc-game_streaming"><span class="uc-dot"></span>Game Streaming</div>
+            <div class="use-case" id="uc-4k_streaming"><span class="uc-dot"></span>4K Streaming</div>
+        </div>
+        <div class="status-info">
+            <span>Interface: <span class="value" id="iface">--</span></span>
+            <span>Active Flows: <span class="value" id="flows">--</span></span>
+            <span>Uptime: <span class="value" id="uptime">--</span></span>
+        </div>
+    </div>
+
+    <div class="range-selector">
+        <button data-range="1h" class="active">1H</button>
+        <button data-range="24h">24H</button>
+        <button data-range="7d">7D</button>
+        <button data-range="30d">30D</button>
+        <button data-range="90d">90D</button>
+    </div>
+
+    <!-- Tab navigation -->
+    <div class="tab-bar">
+        <button class="tab active" data-tab="overview">Overview</button>
+        <button class="tab" data-tab="apps">By Application</button>
+        <button class="tab" data-tab="destinations">By Destination</button>
+    </div>
+
+    <!-- Overview tab -->
+    <div id="tab-overview" class="tab-content active">
+        <!-- Quality score chart -->
+        <div class="panel full-width">
+            <h2>Quality Score Over Time</h2>
+            <canvas id="chart-quality" style="height:120px"></canvas>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h2>Download Speed</h2>
+                <div class="current-value" id="download-value">-- <span class="unit">Mbps</span></div>
+                <canvas id="chart-download"></canvas>
+            </div>
+            <div class="panel">
+                <h2>Upload Speed</h2>
+                <div class="current-value" id="upload-value">-- <span class="unit">Mbps</span></div>
+                <canvas id="chart-upload"></canvas>
+            </div>
+            <div class="panel">
+                <h2>Latency (RTT)</h2>
+                <div class="current-value" id="latency-value">-- <span class="unit">ms</span></div>
+                <canvas id="chart-latency"></canvas>
+            </div>
+            <div class="panel">
+                <h2>Jitter</h2>
+                <div class="current-value" id="jitter-value">-- <span class="unit">ms</span></div>
+                <canvas id="chart-jitter"></canvas>
+            </div>
+            <div class="panel">
+                <h2>Packet Loss</h2>
+                <div class="current-value" id="loss-value">-- <span class="unit">%</span></div>
+                <canvas id="chart-loss"></canvas>
+            </div>
+            <div class="panel">
+                <h2>DNS Resolution</h2>
+                <div class="current-value" id="dns-value">-- <span class="unit">ms</span></div>
+                <canvas id="chart-dns"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Apps tab -->
+    <div id="tab-apps" class="tab-content">
+        <div class="breakdown-layout">
+            <div class="panel breakdown-table-panel">
+                <h2>Top Applications</h2>
+                <table class="breakdown-table" id="apps-table">
+                    <thead><tr><th>Application</th><th>Download</th><th>Upload</th><th>RTT</th><th>Loss</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="panel breakdown-chart-panel">
+                <h2 id="app-chart-title">Select an application</h2>
+                <canvas id="chart-app-detail"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Destinations tab -->
+    <div id="tab-destinations" class="tab-content">
+        <div class="breakdown-layout">
+            <div class="panel breakdown-table-panel">
+                <h2>Top Destinations</h2>
+                <table class="breakdown-table" id="dest-table">
+                    <thead><tr><th>Destination</th><th>Download</th><th>Upload</th><th>RTT</th><th>Loss</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="panel breakdown-chart-panel">
+                <h2 id="dest-chart-title">Select a destination</h2>
+                <canvas id="chart-dest-detail"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
