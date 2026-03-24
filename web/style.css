@@ -233,6 +233,18 @@ h1 {
     font-variant-numeric: tabular-nums;
 }
 
+.panel .sub-value {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    margin-top: -8px;
+    margin-bottom: 12px;
+}
+
+.panel .sub-value span {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
 .panel .current-value .unit {
     font-size: 0.4em;
     color: var(--text-muted);

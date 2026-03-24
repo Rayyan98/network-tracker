@@ -24,6 +24,12 @@ type AggregatedSample struct {
 	DNSMaxMs float64
 	DNSCount int
 
+	// Transfer speed: actual speed data moves at during bursts (bytes/sec)
+	// This is different from throughput — it measures link capacity when active.
+	TransferDownBPS float64 // p90 download burst speed
+	TransferUpBPS   float64 // p90 upload burst speed
+	TransferCount   int     // number of burst samples
+
 	// Quality
 	QualityScore  int            // 0-100 composite score
 	UseCaseStatus map[string]int // use case name -> status (0=bad, 1=degraded, 2=good)

@@ -61,7 +61,9 @@ func migrate(db *sql.DB) error {
 			dns_avg_ms     REAL,
 			dns_max_ms     REAL,
 			dns_count      INTEGER NOT NULL DEFAULT 0,
-			quality_score  INTEGER NOT NULL DEFAULT -1
+			quality_score  INTEGER NOT NULL DEFAULT -1,
+			transfer_down_bps REAL NOT NULL DEFAULT 0,
+			transfer_up_bps   REAL NOT NULL DEFAULT 0
 		) WITHOUT ROWID;
 
 		CREATE TABLE IF NOT EXISTS samples_1m (
@@ -81,7 +83,9 @@ func migrate(db *sql.DB) error {
 			udp_upload_avg   REAL NOT NULL DEFAULT 0,
 			udp_download_avg REAL NOT NULL DEFAULT 0,
 			dns_avg          REAL,
-			quality_avg      REAL
+			quality_avg      REAL,
+			transfer_down_avg REAL NOT NULL DEFAULT 0,
+			transfer_up_avg   REAL NOT NULL DEFAULT 0
 		) WITHOUT ROWID;
 
 		CREATE TABLE IF NOT EXISTS samples_1h (
@@ -101,7 +105,9 @@ func migrate(db *sql.DB) error {
 			udp_upload_avg   REAL NOT NULL DEFAULT 0,
 			udp_download_avg REAL NOT NULL DEFAULT 0,
 			dns_avg          REAL,
-			quality_avg      REAL
+			quality_avg      REAL,
+			transfer_down_avg REAL NOT NULL DEFAULT 0,
+			transfer_up_avg   REAL NOT NULL DEFAULT 0
 		) WITHOUT ROWID;
 
 		CREATE TABLE IF NOT EXISTS samples_1d (
@@ -121,7 +127,9 @@ func migrate(db *sql.DB) error {
 			udp_upload_avg   REAL NOT NULL DEFAULT 0,
 			udp_download_avg REAL NOT NULL DEFAULT 0,
 			dns_avg          REAL,
-			quality_avg      REAL
+			quality_avg      REAL,
+			transfer_down_avg REAL NOT NULL DEFAULT 0,
+			transfer_up_avg   REAL NOT NULL DEFAULT 0
 		) WITHOUT ROWID;
 
 		CREATE TABLE IF NOT EXISTS breakdown_1s (
@@ -206,8 +214,9 @@ func (d *DB) FlushBuffer() error {
 	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO samples_1s
 		(ts, upload_bps, download_bps, rtt_avg_ms, rtt_p95_ms, rtt_max_ms, jitter_ms,
 		 loss_pct, active_flows, rtt_count, segments, retrans,
-		 udp_upload_bps, udp_download_bps, dns_avg_ms, dns_max_ms, dns_count, quality_score)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 udp_upload_bps, udp_download_bps, dns_avg_ms, dns_max_ms, dns_count, quality_score,
+		 transfer_down_bps, transfer_up_bps)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -240,7 +249,7 @@ func (d *DB) FlushBuffer() error {
 			rttAvg, rttP95, rttMax, jitter, lossPct,
 			s.ActiveFlows, s.RTTCount, s.Segments, s.Retrans,
 			s.UDPUploadBPS, s.UDPDownloadBPS, dnsAvg, dnsMax, s.DNSCount,
-			s.QualityScore)
+			s.QualityScore, s.TransferDownBPS, s.TransferUpBPS)
 		if err != nil {
 			return err
 		}

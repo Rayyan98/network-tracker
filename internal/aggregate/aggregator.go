@@ -22,6 +22,10 @@ type Aggregator struct {
 	retrans         int
 	flowCounter     func() int
 
+	// Transfer speed burst samples (bytes/sec)
+	dlSpeeds []float64
+	ulSpeeds []float64
+
 	// Per-key accumulators
 	byApp  map[string]*breakdownAcc
 	byDest map[string]*breakdownAcc
@@ -75,6 +79,10 @@ func (a *Aggregator) Add(s flow.MetricSample) {
 		dnsMs := float64(s.DNSLatency) / float64(time.Millisecond)
 		a.dnsSamples = append(a.dnsSamples, dnsMs)
 	}
+
+	// Collect burst transfer speeds
+	a.dlSpeeds = append(a.dlSpeeds, s.DownloadSpeeds...)
+	a.ulSpeeds = append(a.ulSpeeds, s.UploadSpeeds...)
 
 	if s.IsSegment {
 		a.segments++
@@ -152,10 +160,31 @@ func (a *Aggregator) Flush(ts int64) AggregatedSample {
 		sample.DNSMaxMs = a.dnsSamples[len(a.dnsSamples)-1]
 	}
 
-	// Compute quality score using ITU-T E-Model R-factor
-	sample.QualityScore = computeQualityScore(sample.DownloadBPS, sample.UploadBPS,
+	// Transfer speed: p90 of burst speeds (what your link actually delivers)
+	if len(a.dlSpeeds) > 0 {
+		sort.Float64s(a.dlSpeeds)
+		sample.TransferDownBPS = percentile(a.dlSpeeds, 0.90)
+		sample.TransferCount += len(a.dlSpeeds)
+	}
+	if len(a.ulSpeeds) > 0 {
+		sort.Float64s(a.ulSpeeds)
+		sample.TransferUpBPS = percentile(a.ulSpeeds, 0.90)
+		sample.TransferCount += len(a.ulSpeeds)
+	}
+
+	// Quality score: use transfer speed for throughput component (not raw throughput)
+	// This way idle periods with good burst speed don't tank the score
+	dlForScore := sample.TransferDownBPS
+	ulForScore := sample.TransferUpBPS
+	if dlForScore == 0 {
+		dlForScore = sample.DownloadBPS // fallback to throughput if no bursts
+	}
+	if ulForScore == 0 {
+		ulForScore = sample.UploadBPS
+	}
+	sample.QualityScore = computeQualityScore(dlForScore, ulForScore,
 		sample.RTTAvgMs, sample.JitterMs, sample.LossPct)
-	sample.UseCaseStatus = computeUseCaseStatus(sample.DownloadBPS, sample.UploadBPS,
+	sample.UseCaseStatus = computeUseCaseStatus(dlForScore, ulForScore,
 		sample.RTTAvgMs, sample.JitterMs, sample.LossPct)
 
 	// Build breakdowns
@@ -169,6 +198,8 @@ func (a *Aggregator) Flush(ts int64) AggregatedSample {
 	a.udpDownloadBytes = 0
 	a.rttSamples = a.rttSamples[:0]
 	a.dnsSamples = a.dnsSamples[:0]
+	a.dlSpeeds = a.dlSpeeds[:0]
+	a.ulSpeeds = a.ulSpeeds[:0]
 	a.segments = 0
 	a.retrans = 0
 	a.byApp = make(map[string]*breakdownAcc)

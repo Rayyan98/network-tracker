@@ -254,7 +254,8 @@ function initCharts() {
         type: 'line',
         data: { datasets: [
             { label: 'TCP', borderColor: C.download, data: [] },
-            { label: 'UDP', borderColor: C.udpDown, borderDash: [4,4], data: [] }
+            { label: 'UDP', borderColor: C.udpDown, borderDash: [4,4], data: [] },
+            { label: 'Link Speed', borderColor: '#fff', borderWidth: 1, borderDash: [2,3], pointRadius: 0, data: [] }
         ] },
         options: makeOpts(v => fmtBytes(v) + '/s', annotations.download,
             tooltipWithBand(v => ratingDirect(v, 25*1024*1024, 10*1024*1024, 3*1024*1024)))
@@ -264,7 +265,8 @@ function initCharts() {
         type: 'line',
         data: { datasets: [
             { label: 'TCP', borderColor: C.upload, data: [] },
-            { label: 'UDP', borderColor: C.udpUp, borderDash: [4,4], data: [] }
+            { label: 'UDP', borderColor: C.udpUp, borderDash: [4,4], data: [] },
+            { label: 'Link Speed', borderColor: '#fff', borderWidth: 1, borderDash: [2,3], pointRadius: 0, data: [] }
         ] },
         options: makeOpts(v => fmtBytes(v) + '/s', annotations.upload,
             tooltipWithBand(v => ratingDirect(v, 5*1024*1024, 2*1024*1024, 500*1024)))
@@ -355,11 +357,13 @@ function updateOverview(data) {
     const tcpDown = data.map(d => (d.download_avg || 0) - (d.udp_download_avg || 0));
     charts.download.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: Math.max(0, tcpDown[i]) }));
     charts.download.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: d.udp_download_avg || 0 }));
+    charts.download.data.datasets[2].data = data.map((d, i) => ({ x: ts[i], y: d.transfer_down_avg > 0 ? d.transfer_down_avg : null }));
     charts.download.update();
 
     const tcpUp = data.map(d => (d.upload_avg || 0) - (d.udp_upload_avg || 0));
     charts.upload.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: Math.max(0, tcpUp[i]) }));
     charts.upload.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: d.udp_upload_avg || 0 }));
+    charts.upload.data.datasets[2].data = data.map((d, i) => ({ x: ts[i], y: d.transfer_up_avg > 0 ? d.transfer_up_avg : null }));
     charts.upload.update();
 
     // Latency/jitter/loss/DNS: null when no data (not 0 — 0 would mean "perfect")
@@ -380,6 +384,8 @@ function updateOverview(data) {
     const L = data[data.length - 1];
     document.getElementById('download-value').innerHTML = fmtSpeed(L.download_avg || 0);
     document.getElementById('upload-value').innerHTML = fmtSpeed(L.upload_avg || 0);
+    document.getElementById('transfer-down-value').innerHTML = L.transfer_down_avg > 0 ? fmtSpeed(L.transfer_down_avg) : '--';
+    document.getElementById('transfer-up-value').innerHTML = L.transfer_up_avg > 0 ? fmtSpeed(L.transfer_up_avg) : '--';
     document.getElementById('latency-value').innerHTML = (L.rtt_avg ? L.rtt_avg.toFixed(1) : '--') + ' <span class="unit">ms</span>';
     document.getElementById('jitter-value').innerHTML = (L.jitter_avg ? L.jitter_avg.toFixed(1) : '--') + ' <span class="unit">ms</span>';
     document.getElementById('loss-value').innerHTML = (L.loss_avg != null ? L.loss_avg.toFixed(2) : '--') + ' <span class="unit">%</span>';

@@ -15,4 +15,10 @@ type MetricSample struct {
 	Process       string // process name (filled by caller)
 	IsUDP         bool   // true if this was a UDP packet
 	DNSLatency    time.Duration // DNS query->response time (if applicable)
+
+	// Transfer speed: actual speed data was moving at within bursts (bytes/sec).
+	// These are populated per-packet from the flow's burst tracker.
+	// Empty slices mean no burst completed during this packet.
+	DownloadSpeeds []float64
+	UploadSpeeds   []float64
 }

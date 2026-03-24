@@ -19,10 +19,12 @@ type MetricRow struct {
 	LossMax        *float64 `json:"loss_max"`
 	ActiveFlows    float64  `json:"active_flows"`
 	SampleCount    int      `json:"sample_count"`
-	UDPUploadAvg   float64  `json:"udp_upload_avg"`
-	UDPDownloadAvg float64  `json:"udp_download_avg"`
-	DNSAvg         *float64 `json:"dns_avg"`
-	QualityAvg     *float64 `json:"quality_avg"`
+	UDPUploadAvg     float64  `json:"udp_upload_avg"`
+	UDPDownloadAvg   float64  `json:"udp_download_avg"`
+	DNSAvg           *float64 `json:"dns_avg"`
+	QualityAvg       *float64 `json:"quality_avg"`
+	TransferDownAvg  float64  `json:"transfer_down_avg"`
+	TransferUpAvg    float64  `json:"transfer_up_avg"`
 }
 
 // QueryMetrics returns time-series data for the given range and granularity.
@@ -42,7 +44,8 @@ func (d *DB) query1s(rangeSec int64) ([]MetricRow, error) {
 		SELECT ts, upload_bps, download_bps,
 			rtt_avg_ms, rtt_p95_ms, rtt_max_ms, jitter_ms, loss_pct,
 			active_flows, rtt_count, segments, retrans,
-			udp_upload_bps, udp_download_bps, dns_avg_ms, quality_score
+			udp_upload_bps, udp_download_bps, dns_avg_ms, quality_score,
+			transfer_down_bps, transfer_up_bps
 		FROM samples_1s
 		WHERE ts >= (strftime('%s', 'now') - ?)
 		ORDER BY ts ASC`, rangeSec)
@@ -60,7 +63,8 @@ func (d *DB) query1s(rangeSec int64) ([]MetricRow, error) {
 		err := rows.Scan(&r.Timestamp, &r.UploadAvg, &r.DownloadAvg,
 			&rttAvg, &rttP95, &rttMax, &jitter, &lossPct,
 			&r.ActiveFlows, &rttCount, &segments, &retrans,
-			&r.UDPUploadAvg, &r.UDPDownloadAvg, &dnsAvg, &qualityScore)
+			&r.UDPUploadAvg, &r.UDPDownloadAvg, &dnsAvg, &qualityScore,
+			&r.TransferDownAvg, &r.TransferUpAvg)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +92,8 @@ func (d *DB) queryAgg(table string, rangeSec int64) ([]MetricRow, error) {
 		SELECT ts, upload_avg, upload_max, download_avg, download_max,
 			rtt_avg, rtt_p95, rtt_max, jitter_avg, loss_avg, loss_max,
 			active_flows_avg, sample_count,
-			udp_upload_avg, udp_download_avg, dns_avg, quality_avg
+			udp_upload_avg, udp_download_avg, dns_avg, quality_avg,
+			transfer_down_avg, transfer_up_avg
 		FROM %s
 		WHERE ts >= (strftime('%%s', 'now') - ?)
 		ORDER BY ts ASC`, table)
@@ -108,7 +113,8 @@ func (d *DB) queryAgg(table string, rangeSec int64) ([]MetricRow, error) {
 			&rttAvg, &rttP95, &rttMax, &jitter,
 			&lossAvg, &lossMax,
 			&r.ActiveFlows, &r.SampleCount,
-			&r.UDPUploadAvg, &r.UDPDownloadAvg, &dnsAvg, &qualityAvg)
+			&r.UDPUploadAvg, &r.UDPDownloadAvg, &dnsAvg, &qualityAvg,
+			&r.TransferDownAvg, &r.TransferUpAvg)
 		if err != nil {
 			return nil, err
 		}

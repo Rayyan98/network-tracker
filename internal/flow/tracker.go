@@ -32,6 +32,7 @@ func makeFlowKey(srcIP, dstIP net.IP, srcPort, dstPort uint16, proto capture.Pro
 type flowState struct {
 	rtt      *rttTracker
 	loss     *lossTracker
+	speed    *speedTracker
 	lastSeen time.Time
 }
 
@@ -85,11 +86,27 @@ func (t *Tracker) Process(pkt capture.Packet) MetricSample {
 		sample.DownloadBytes = pkt.PayloadLen
 	}
 
-	// Handle UDP
+	// Handle UDP — also track transfer speed for UDP flows
 	if pkt.Protocol == capture.ProtoUDP {
 		if pkt.IsDNS {
 			sample.DNSLatency = t.trackDNS(pkt, isUpload)
 		}
+		// Track UDP flow speed
+		key := makeFlowKey(pkt.SrcIP, pkt.DstIP, pkt.SrcPort, pkt.DstPort, pkt.Protocol)
+		t.mu.Lock()
+		fs, exists := t.flows[key]
+		if !exists {
+			fs = &flowState{
+				rtt:   newRTTTracker(),
+				loss:  newLossTracker(),
+				speed: newSpeedTracker(),
+			}
+			t.flows[key] = fs
+		}
+		fs.lastSeen = pkt.Timestamp
+		fs.speed.RecordData(pkt.Timestamp, sample.UploadBytes, sample.DownloadBytes)
+		sample.DownloadSpeeds, sample.UploadSpeeds = fs.speed.DrainSpeeds()
+		t.mu.Unlock()
 		return sample
 	}
 
@@ -101,8 +118,9 @@ func (t *Tracker) Process(pkt capture.Packet) MetricSample {
 	fs, exists := t.flows[key]
 	if !exists {
 		fs = &flowState{
-			rtt:  newRTTTracker(),
-			loss: newLossTracker(),
+			rtt:   newRTTTracker(),
+			loss:  newLossTracker(),
+			speed: newSpeedTracker(),
 		}
 		t.flows[key] = fs
 	}
@@ -151,6 +169,12 @@ func (t *Tracker) Process(pkt capture.Packet) MetricSample {
 	if tcp.ACK {
 		fs.loss.RecordACK(tcp.Ack, isUpload, pkt.PayloadLen)
 	}
+
+	// Transfer speed tracking
+	if pkt.PayloadLen > 0 {
+		fs.speed.RecordData(pkt.Timestamp, sample.UploadBytes, sample.DownloadBytes)
+	}
+	sample.DownloadSpeeds, sample.UploadSpeeds = fs.speed.DrainSpeeds()
 
 	return sample
 }

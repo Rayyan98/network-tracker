@@ -52,7 +52,8 @@ func (d *DB) downsampleToMinute() error {
 			(ts, upload_avg, upload_max, download_avg, download_max,
 			 rtt_avg, rtt_p95, rtt_max, jitter_avg, loss_avg, loss_max,
 			 active_flows_avg, sample_count,
-			 udp_upload_avg, udp_download_avg, dns_avg, quality_avg)
+			 udp_upload_avg, udp_download_avg, dns_avg, quality_avg,
+			 transfer_down_avg, transfer_up_avg)
 		SELECT
 			(ts / 60) * 60 as bucket,
 			AVG(upload_bps), MAX(upload_bps),
@@ -63,7 +64,9 @@ func (d *DB) downsampleToMinute() error {
 			AVG(active_flows), COUNT(*),
 			AVG(udp_upload_bps), AVG(udp_download_bps),
 			AVG(dns_avg_ms),
-			AVG(CASE WHEN quality_score >= 0 THEN quality_score END)
+			AVG(CASE WHEN quality_score >= 0 THEN quality_score END),
+			AVG(CASE WHEN transfer_down_bps > 0 THEN transfer_down_bps END),
+			AVG(CASE WHEN transfer_up_bps > 0 THEN transfer_up_bps END)
 		FROM samples_1s
 		WHERE ts >= (strftime('%s', 'now') - 120)
 		GROUP BY bucket
@@ -77,7 +80,8 @@ func (d *DB) downsampleToHour() error {
 			(ts, upload_avg, upload_max, download_avg, download_max,
 			 rtt_avg, rtt_p95, rtt_max, jitter_avg, loss_avg, loss_max,
 			 active_flows_avg, sample_count,
-			 udp_upload_avg, udp_download_avg, dns_avg, quality_avg)
+			 udp_upload_avg, udp_download_avg, dns_avg, quality_avg,
+			 transfer_down_avg, transfer_up_avg)
 		SELECT
 			(ts / 3600) * 3600 as bucket,
 			AVG(upload_avg), MAX(upload_max),
@@ -87,7 +91,8 @@ func (d *DB) downsampleToHour() error {
 			AVG(loss_avg), MAX(loss_max),
 			AVG(active_flows_avg), SUM(sample_count),
 			AVG(udp_upload_avg), AVG(udp_download_avg),
-			AVG(dns_avg), AVG(quality_avg)
+			AVG(dns_avg), AVG(quality_avg),
+			AVG(transfer_down_avg), AVG(transfer_up_avg)
 		FROM samples_1m
 		WHERE ts >= (strftime('%s', 'now') - 7200)
 		GROUP BY bucket
@@ -101,7 +106,8 @@ func (d *DB) downsampleToDay() error {
 			(ts, upload_avg, upload_max, download_avg, download_max,
 			 rtt_avg, rtt_p95, rtt_max, jitter_avg, loss_avg, loss_max,
 			 active_flows_avg, sample_count,
-			 udp_upload_avg, udp_download_avg, dns_avg, quality_avg)
+			 udp_upload_avg, udp_download_avg, dns_avg, quality_avg,
+			 transfer_down_avg, transfer_up_avg)
 		SELECT
 			(ts / 86400) * 86400 as bucket,
 			AVG(upload_avg), MAX(upload_max),
@@ -111,7 +117,8 @@ func (d *DB) downsampleToDay() error {
 			AVG(loss_avg), MAX(loss_max),
 			AVG(active_flows_avg), SUM(sample_count),
 			AVG(udp_upload_avg), AVG(udp_download_avg),
-			AVG(dns_avg), AVG(quality_avg)
+			AVG(dns_avg), AVG(quality_avg),
+			AVG(transfer_down_avg), AVG(transfer_up_avg)
 		FROM samples_1h
 		WHERE ts >= (strftime('%s', 'now') - 172800)
 		GROUP BY bucket
