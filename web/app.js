@@ -91,17 +91,56 @@ const baseOpts = {
         x: { type: 'time', grid: { color: '#21262d' }, ticks: { color: '#8b949e', maxTicksLimit: 8, font: { size: 10 } } },
         y: { beginAtZero: true, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
     },
-    elements: { point: { radius: 0 }, line: { borderWidth: 1.5, tension: 0.3 } }
+    elements: { point: { radius: 0 }, line: { borderWidth: 1.5, tension: 0.3, spanGaps: false } }
 };
 
-function makeOpts(yCallback, annots) {
+function makeOpts(yCallback, annots, tooltipOpts) {
     return {
         ...baseOpts,
         plugins: {
             ...baseOpts.plugins,
-            annotation: { annotations: annots || {} }
+            annotation: { annotations: annots || {} },
+            tooltip: { mode: 'index', intersect: false, ...(tooltipOpts || {}) }
         },
         scales: { ...baseOpts.scales, y: { ...baseOpts.scales.y, ticks: { ...baseOpts.scales.y.ticks, callback: yCallback } } }
+    };
+}
+
+// --- Quality band helpers for tooltips ---
+function qualityBand(score) {
+    if (score == null) return '';
+    if (score >= 80) return ' (Good)';
+    if (score >= 50) return ' (Degraded)';
+    return ' (Bad)';
+}
+
+function ratingInverse(val, great, ok, bad) {
+    if (val == null) return '';
+    if (val <= great) return ' (Great)';
+    if (val <= ok) return ' (OK)';
+    return ' (Bad)';
+}
+
+function ratingDirect(val, great, ok, bad) {
+    if (val == null) return '';
+    if (val >= great) return ' (Great)';
+    if (val >= ok) return ' (OK)';
+    return ' (Bad)';
+}
+
+function tooltipWithBand(ratingFn) {
+    return {
+        callbacks: {
+            label: function(ctx) {
+                let label = ctx.dataset.label || '';
+                if (label) label += ': ';
+                const val = ctx.parsed.y;
+                if (val == null) return label + 'No data';
+                label += ctx.formattedValue;
+                label += ratingFn(val);
+                return label;
+            }
+        }
     };
 }
 
@@ -111,7 +150,11 @@ function initCharts() {
         data: { datasets: [{ label: 'Quality', borderColor: C.quality, backgroundColor: C.qualityBg, fill: true, data: [] }] },
         options: {
             ...baseOpts,
-            plugins: { ...baseOpts.plugins, annotation: { annotations: annotations.quality } },
+            plugins: {
+                ...baseOpts.plugins,
+                annotation: { annotations: annotations.quality },
+                tooltip: { mode: 'index', intersect: false, ...tooltipWithBand(v => qualityBand(v)) }
+            },
             scales: { ...baseOpts.scales, y: { ...baseOpts.scales.y, min: 0, max: 100, ticks: { ...baseOpts.scales.y.ticks, callback: v => v } } }
         }
     });
@@ -122,7 +165,8 @@ function initCharts() {
             { label: 'TCP', borderColor: C.download, data: [] },
             { label: 'UDP', borderColor: '#388bfd66', borderDash: [4,4], data: [] }
         ] },
-        options: makeOpts(v => fmtBytes(v) + '/s', annotations.download)
+        options: makeOpts(v => fmtBytes(v) + '/s', annotations.download,
+            tooltipWithBand(v => ratingDirect(v, 25*1024*1024, 5*1024*1024, 1*1024*1024)))
     });
 
     charts.upload = new Chart(document.getElementById('chart-upload'), {
@@ -131,7 +175,8 @@ function initCharts() {
             { label: 'TCP', borderColor: C.upload, data: [] },
             { label: 'UDP', borderColor: '#2ea04366', borderDash: [4,4], data: [] }
         ] },
-        options: makeOpts(v => fmtBytes(v) + '/s', annotations.upload)
+        options: makeOpts(v => fmtBytes(v) + '/s', annotations.upload,
+            tooltipWithBand(v => ratingDirect(v, 10*1024*1024, 2*1024*1024, 512*1024)))
     });
 
     charts.latency = new Chart(document.getElementById('chart-latency'), {
@@ -140,25 +185,29 @@ function initCharts() {
             { label: 'Avg', borderColor: C.rttAvg, data: [] },
             { label: 'P95', borderColor: C.rttP95, data: [] }
         ] },
-        options: makeOpts(v => v.toFixed(0) + 'ms', annotations.latency)
+        options: makeOpts(v => v.toFixed(0) + 'ms', annotations.latency,
+            tooltipWithBand(v => ratingInverse(v, 30, 100, 200)))
     });
 
     charts.jitter = new Chart(document.getElementById('chart-jitter'), {
         type: 'line',
         data: { datasets: [{ label: 'Jitter', borderColor: C.jitter, backgroundColor: C.jitter + '20', fill: true, data: [] }] },
-        options: makeOpts(v => v.toFixed(1) + 'ms', annotations.jitter)
+        options: makeOpts(v => v.toFixed(1) + 'ms', annotations.jitter,
+            tooltipWithBand(v => ratingInverse(v, 10, 30, 50)))
     });
 
     charts.loss = new Chart(document.getElementById('chart-loss'), {
         type: 'line',
         data: { datasets: [{ label: 'Packet Loss', borderColor: C.loss, backgroundColor: C.loss + '20', fill: true, data: [] }] },
-        options: makeOpts(v => v.toFixed(1) + '%', annotations.loss)
+        options: makeOpts(v => v.toFixed(1) + '%', annotations.loss,
+            tooltipWithBand(v => ratingInverse(v, 0.1, 1.0, 5.0)))
     });
 
     charts.dns = new Chart(document.getElementById('chart-dns'), {
         type: 'line',
         data: { datasets: [{ label: 'DNS', borderColor: C.dns, backgroundColor: C.dns + '20', fill: true, data: [] }] },
-        options: makeOpts(v => v.toFixed(0) + 'ms', annotations.dns)
+        options: makeOpts(v => v.toFixed(0) + 'ms', annotations.dns,
+            tooltipWithBand(v => ratingInverse(v, 50, 100, 200)))
     });
 }
 
@@ -205,9 +254,13 @@ function updateOverview(data) {
     if (!data || data.length === 0) return;
     const ts = data.map(d => new Date(d.ts * 1000));
 
-    charts.quality.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.quality_avg != null ? d.quality_avg : 0 }));
+    // Quality: null when no score available
+    charts.quality.data.datasets[0].data = data.map((d, i) => ({
+        x: ts[i], y: d.quality_avg != null && d.quality_avg >= 0 ? d.quality_avg : null
+    }));
     charts.quality.update();
 
+    // Throughput: 0 is valid (no traffic = 0 bytes), so keep as-is
     const tcpDown = data.map(d => (d.download_avg || 0) - (d.udp_download_avg || 0));
     charts.download.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: Math.max(0, tcpDown[i]) }));
     charts.download.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: d.udp_download_avg || 0 }));
@@ -218,17 +271,18 @@ function updateOverview(data) {
     charts.upload.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: d.udp_upload_avg || 0 }));
     charts.upload.update();
 
-    charts.latency.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.rtt_avg || 0 }));
-    charts.latency.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: d.rtt_p95 || 0 }));
+    // Latency/jitter/loss/DNS: null when no data (not 0 — 0 would mean "perfect")
+    charts.latency.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.rtt_avg != null ? d.rtt_avg : null }));
+    charts.latency.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: d.rtt_p95 != null ? d.rtt_p95 : null }));
     charts.latency.update();
 
-    charts.jitter.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.jitter_avg || 0 }));
+    charts.jitter.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.jitter_avg != null ? d.jitter_avg : null }));
     charts.jitter.update();
 
-    charts.loss.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.loss_avg || 0 }));
+    charts.loss.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.loss_avg != null ? d.loss_avg : null }));
     charts.loss.update();
 
-    charts.dns.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.dns_avg || 0 }));
+    charts.dns.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.dns_avg != null ? d.dns_avg : null }));
     charts.dns.update();
 
     // Current values
@@ -258,7 +312,17 @@ function updateUseCases(data) {
     if (!data || data.length === 0) return;
     const L = data[data.length - 1];
     const down = L.download_avg || 0, up = L.upload_avg || 0;
-    const rtt = L.rtt_avg || 0, jitter = L.jitter_avg || 0, loss = L.loss_avg || 0;
+    const rtt = L.rtt_avg, jitter = L.jitter_avg, loss = L.loss_avg;
+
+    // If idle (no meaningful traffic and no quality data), show neutral state
+    const idle = down < 1000 && up < 1000 && rtt == null;
+    if (idle) {
+        ['hd_video_call', 'audio_call', 'screen_sharing', 'game_streaming', '4k_streaming'].forEach(id => {
+            const el = document.getElementById('uc-' + id);
+            if (el) el.classList.remove('good', 'degraded', 'bad');
+        });
+        return;
+    }
 
     setUC('hd_video_call', down, up, rtt, jitter, loss, 3*1024*1024, 3*1024*1024, 100, 20, 0.5);
     setUC('audio_call', down, up, rtt, jitter, loss, 100*1024, 100*1024, 150, 30, 1.0);
@@ -272,11 +336,13 @@ function setUC(id, down, up, rtt, jitter, loss, needDown, needUp, maxRTT, maxJit
     if (!el) return;
     el.classList.remove('good', 'degraded', 'bad');
     let good = true, degraded = false;
+    // Throughput checks (0 is a real value — means no traffic right now)
     if (needDown > 0 && down < needDown) { down >= needDown * 0.5 ? degraded = true : good = false; }
     if (needUp > 0 && up < needUp) { up >= needUp * 0.5 ? degraded = true : good = false; }
-    if (rtt > 0 && rtt > maxRTT) { rtt <= maxRTT * 1.5 ? degraded = true : good = false; }
-    if (jitter > 0 && jitter > maxJitter) { jitter <= maxJitter * 2 ? degraded = true : good = false; }
-    if (loss > maxLoss) { loss <= maxLoss * 3 ? degraded = true : good = false; }
+    // Quality checks — only evaluate when we have data (not null)
+    if (rtt != null && rtt > maxRTT) { rtt <= maxRTT * 1.5 ? degraded = true : good = false; }
+    if (jitter != null && jitter > maxJitter) { jitter <= maxJitter * 2 ? degraded = true : good = false; }
+    if (loss != null && loss > maxLoss) { loss <= maxLoss * 3 ? degraded = true : good = false; }
     if (!good) el.classList.add('bad');
     else if (degraded) el.classList.add('degraded');
     else el.classList.add('good');
