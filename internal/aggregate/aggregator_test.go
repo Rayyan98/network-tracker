@@ -121,17 +121,50 @@ func TestDNSTracking(t *testing.T) {
 	}
 }
 
+func TestRFactor(t *testing.T) {
+	// Perfect conditions: low latency, no jitter, no loss
+	R := computeRFactor(20, 2, 0)
+	if R < 85 {
+		t.Errorf("expected R>85 for perfect conditions, got %.1f", R)
+	}
+
+	// Karachi typical: 68ms RTT, 10ms jitter, 0.5% loss
+	R = computeRFactor(68, 10, 0.5)
+	if R < 60 || R > 90 {
+		t.Errorf("expected R in 60-90 for Karachi typical, got %.1f", R)
+	}
+
+	// Bad conditions: 300ms RTT, 60ms jitter, 5% loss
+	R = computeRFactor(300, 60, 5)
+	if R > 65 {
+		t.Errorf("expected R<65 for bad conditions, got %.1f", R)
+	}
+}
+
+func TestRFactorToMOS(t *testing.T) {
+	// R=93 should give MOS ~4.3
+	mos := rFactorToMOS(93)
+	if mos < 4.2 || mos > 4.4 {
+		t.Errorf("expected MOS ~4.3 for R=93, got %.2f", mos)
+	}
+
+	// R=50 should give MOS ~2.6
+	mos = rFactorToMOS(50)
+	if mos < 2.4 || mos > 2.9 {
+		t.Errorf("expected MOS ~2.6 for R=50, got %.2f", mos)
+	}
+}
+
 func TestQualityScore(t *testing.T) {
 	// Perfect conditions
 	score := computeQualityScore(
 		30*1024*1024, // 30MB/s down
-		15*1024*1024, // 15MB/s up
+		10*1024*1024, // 10MB/s up
 		20,           // 20ms RTT
 		5,            // 5ms jitter
-		0.05,         // 0.05% loss
-		1.0,          // perfect consistency
+		0.1,          // 0.1% loss
 	)
-	if score < 90 {
+	if score < 85 {
 		t.Errorf("expected high quality score for perfect conditions, got %d", score)
 	}
 
@@ -139,13 +172,18 @@ func TestQualityScore(t *testing.T) {
 	score = computeQualityScore(
 		100*1024, // 100KB/s down
 		50*1024,  // 50KB/s up
-		250,      // 250ms RTT
+		300,      // 300ms RTT
 		60,       // 60ms jitter
-		8,        // 8% loss
-		0.3,      // unstable
+		5,        // 5% loss
 	)
-	if score > 20 {
+	if score > 40 {
 		t.Errorf("expected low quality score for terrible conditions, got %d", score)
+	}
+
+	// Idle with no data
+	score = computeQualityScore(0, 0, 0, 0, 0)
+	if score != -1 {
+		t.Errorf("expected -1 for no data, got %d", score)
 	}
 }
 
@@ -156,7 +194,7 @@ func TestUseCaseStatus(t *testing.T) {
 		5*1024*1024,  // 5MB/s up
 		50,           // 50ms RTT
 		10,           // 10ms jitter
-		0.1,          // 0.1% loss
+		0.3,          // 0.3% loss
 	)
 
 	if status["hd_video_call"] != 2 {
@@ -169,14 +207,25 @@ func TestUseCaseStatus(t *testing.T) {
 	// Bad conditions for game streaming (high latency)
 	status = computeUseCaseStatus(
 		10*1024*1024,
-		5*1024*1024,
-		200, // too high for gaming
+		8*1024*1024,
+		200, // too high for gaming (limit is 100ms)
 		30,
 		0.5,
 	)
 
 	if status["game_streaming"] == 2 {
 		t.Errorf("expected game_streaming != good with 200ms RTT, got %d", status["game_streaming"])
+	}
+
+	// 4K streaming: 10 MB/s is below the 25 MB/s requirement, so should be degraded (not good)
+	if status["4k_streaming"] == 2 {
+		t.Errorf("expected 4k_streaming not good with 10MB/s (needs 25MB/s), got %d", status["4k_streaming"])
+	}
+
+	// 4K with enough bandwidth but high latency should still work (latency irrelevant)
+	status4k := computeUseCaseStatus(30*1024*1024, 1*1024*1024, 500, 100, 0.5)
+	if status4k["4k_streaming"] != 2 {
+		t.Errorf("expected 4k_streaming=good with 30MB/s despite high latency, got %d", status4k["4k_streaming"])
 	}
 }
 

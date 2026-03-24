@@ -5,11 +5,19 @@ let detailCharts = {};
 let refreshInterval = null;
 
 const C = {
-    upload: '#3fb950', download: '#58a6ff',
-    rttAvg: '#d2a8ff', rttP95: '#f0883e',
-    jitter: '#d29922', loss: '#f85149',
-    flows: '#79c0ff', dns: '#a5d6ff',
-    quality: '#3fb950', qualityBg: '#3fb95020',
+    download: '#00d4ff',     // bright cyan
+    upload: '#00e676',       // bright green
+    rttAvg: '#b388ff',      // electric purple
+    rttP95: '#ff9100',      // hot orange
+    jitter: '#ffab00',      // vivid amber
+    loss: '#ff5252',        // bright red
+    flows: '#4facfe',       // sky blue
+    dns: '#64b5f6',         // light blue
+    quality: '#00e676',
+    qualityBg: 'rgba(0, 230, 118, 0.12)',
+    // UDP variants — same hue, lower opacity
+    udpDown: 'rgba(0, 212, 255, 0.4)',
+    udpUp: 'rgba(0, 230, 118, 0.4)',
 };
 
 // --- Threshold line helpers ---
@@ -17,6 +25,8 @@ function thresholdLine(value, color, label) {
     return {
         type: 'line',
         yMin: value, yMax: value,
+        yScaleID: 'y',
+        adjustScaleRange: false,
         borderColor: color,
         borderWidth: 1,
         borderDash: [6, 4],
@@ -36,45 +46,93 @@ function thresholdBand(yMin, yMax, color) {
     return {
         type: 'box',
         yMin: yMin, yMax: yMax,
+        yScaleID: 'y',
+        adjustScaleRange: false, // DON'T expand axis to fit the band
         backgroundColor: color,
         borderWidth: 0,
     };
 }
 
+function thresholdLineNoExpand(value, color, label) {
+    return {
+        type: 'line',
+        yMin: value, yMax: value,
+        yScaleID: 'y',
+        adjustScaleRange: false, // DON'T expand axis to fit the line
+        borderColor: color,
+        borderWidth: 1,
+        borderDash: [6, 4],
+        label: {
+            display: true,
+            content: label,
+            position: 'start',
+            color: color,
+            backgroundColor: 'transparent',
+            font: { size: 9, weight: 'normal' },
+            padding: { top: 0, bottom: 0, left: 2, right: 2 }
+        }
+    };
+}
+
+// Band colors — Grafana-style: 25-40% opacity so zones are unmistakable
+const BG = 'rgba(0,200,83,';    // green
+const BO = 'rgba(255,160,0,';   // amber
+const BR = 'rgba(255,23,68,';   // red
+const BX = 'rgba(183,28,28,';   // deep red
+
 const annotations = {
     quality: {
-        bandGood:     thresholdBand(80, 100, '#3fb95010'),
-        bandDegraded: thresholdBand(50, 80, '#d2992210'),
-        bandBad:      thresholdBand(0, 50, '#f8514910'),
-        lineGood:     thresholdLine(80, '#3fb95060', 'Good'),
-        lineDegraded: thresholdLine(50, '#d2992260', 'Degraded'),
+        // R-factor: 80+ excellent, 60-80 good, <60 poor
+        lineGood:     thresholdLine(80, BG+'0.8)', 'Good (R>80)'),
+        lineFair:     thresholdLine(60, BO+'0.8)', 'Fair (R=60)'),
     },
     latency: {
-        lineGreat:    thresholdLine(30, '#3fb95050', '30ms Great'),
-        lineDegraded: thresholdLine(100, '#d2992250', '100ms OK'),
-        lineBad:      thresholdLine(200, '#f8514950', '200ms Bad'),
+        // ITU-T G.114: <150ms one-way = <75ms RTT great, <300ms RTT acceptable
+        bandGreat:    thresholdBand(0, 75,       BG+'0.25)'),
+        bandOK:       thresholdBand(75, 150,     BO+'0.20)'),
+        bandBad:      thresholdBand(150, 10000,  BR+'0.22)'),
+        lineGreat:    thresholdLine(75,  BG+'0.8)', '75ms (ITU Great)'),
+        lineBad:      thresholdLine(150, BR+'0.8)', '150ms (ITU Limit)'),
     },
     jitter: {
-        lineGreat:    thresholdLine(10, '#3fb95050', '10ms Great'),
-        lineDegraded: thresholdLine(30, '#d2992250', '30ms OK'),
-        lineBad:      thresholdLine(50, '#f8514950', '50ms Bad'),
+        // ITU VoIP: <20ms good, 20-50ms acceptable, >50ms bad
+        bandGreat:    thresholdBand(0, 20,     BG+'0.25)'),
+        bandOK:       thresholdBand(20, 50,    BO+'0.20)'),
+        bandBad:      thresholdBand(50, 10000, BR+'0.22)'),
+        lineGreat:    thresholdLine(20, BG+'0.8)', '20ms'),
+        lineBad:      thresholdLine(50, BR+'0.8)', '50ms'),
     },
     loss: {
-        lineGreat:    thresholdLine(0.1, '#3fb95050', '0.1% Great'),
-        lineDegraded: thresholdLine(1.0, '#d2992250', '1% OK'),
-        lineBad:      thresholdLine(5.0, '#f8514950', '5% Bad'),
+        // ITU VoIP: <1% acceptable, 1-2.5% degraded, >2.5% bad
+        bandGreat:    thresholdBand(0, 1,     BG+'0.25)'),
+        bandOK:       thresholdBand(1, 2.5,   BO+'0.20)'),
+        bandBad:      thresholdBand(2.5, 100, BR+'0.22)'),
+        lineGreat:    thresholdLine(1,   BG+'0.8)', '1%'),
+        lineBad:      thresholdLine(2.5, BR+'0.8)', '2.5%'),
     },
     dns: {
-        lineGreat:    thresholdLine(50, '#3fb95050', '50ms Fast'),
-        lineDegraded: thresholdLine(100, '#d2992250', '100ms Slow'),
+        // Industry: <50ms fast, 50-200ms acceptable, >200ms slow
+        bandGreat:    thresholdBand(0, 50,       BG+'0.25)'),
+        bandOK:       thresholdBand(50, 200,     BO+'0.20)'),
+        bandBad:      thresholdBand(200, 10000,  BR+'0.22)'),
+        lineGreat:    thresholdLine(50,  BG+'0.8)', '50ms'),
+        lineBad:      thresholdLine(200, BR+'0.8)', '200ms'),
     },
     download: {
-        lineHD:       thresholdLine(3 * 1024 * 1024, '#58a6ff30', '3 MB/s HD Video'),
-        line4K:       thresholdLine(25 * 1024 * 1024, '#d2a8ff30', '25 MB/s 4K'),
+        bandBad:      thresholdBand(0,              1*1024*1024,  BR+'0.18)'),
+        bandOK:       thresholdBand(1*1024*1024,    5*1024*1024,  BO+'0.15)'),
+        bandGood:     thresholdBand(5*1024*1024,   25*1024*1024,  BG+'0.12)'),
+        bandGreat:    thresholdBand(25*1024*1024,   1e12,         BG+'0.25)'),
+        lineHD:       thresholdLine(3*1024*1024,  'rgba(0,212,255,0.6)', '3 MB/s HD Video'),
+        line4K:       thresholdLine(25*1024*1024, 'rgba(179,136,255,0.6)', '25 MB/s 4K'),
     },
     upload: {
-        lineVideo:    thresholdLine(3 * 1024 * 1024, '#3fb95030', '3 MB/s Video Call'),
-        lineStream:   thresholdLine(5 * 1024 * 1024, '#d2a8ff30', '5 MB/s Game Stream'),
+        bandBad:      thresholdBand(0,             512*1024,      BR+'0.18)'),
+        bandOK:       thresholdBand(512*1024,      2*1024*1024,   BO+'0.15)'),
+        bandGood:     thresholdBand(2*1024*1024,  10*1024*1024,   BG+'0.12)'),
+        bandGreat:    thresholdBand(10*1024*1024,  1e12,          BG+'0.25)'),
+        lineVideo:    thresholdLine(3*1024*1024,  'rgba(0,230,118,0.6)', '3 MB/s Video Call'),
+        lineStream:   thresholdLine(5*1024*1024,  'rgba(179,136,255,0.6)', '5 MB/s Game Stream'),
     },
 };
 
@@ -83,15 +141,24 @@ const baseOpts = {
     responsive: true, maintainAspectRatio: false,
     animation: { duration: 300 },
     plugins: {
-        legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: { size: 11 } } },
-        tooltip: { mode: 'index', intersect: false },
+        legend: { labels: { color: '#8b9bb0', boxWidth: 12, padding: 10, font: { size: 11 } } },
+        tooltip: {
+            mode: 'index', intersect: false,
+            backgroundColor: '#1a2332ee',
+            titleColor: '#e6edf3',
+            bodyColor: '#8b9bb0',
+            borderColor: '#243044',
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 6,
+        },
         annotation: { annotations: {} }
     },
     scales: {
-        x: { type: 'time', grid: { color: '#21262d' }, ticks: { color: '#8b949e', maxTicksLimit: 8, font: { size: 10 } } },
-        y: { beginAtZero: true, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+        x: { type: 'time', grid: { color: '#1a233280' }, ticks: { color: '#5d6f85', maxTicksLimit: 8, font: { size: 10 } } },
+        y: { beginAtZero: true, grid: { color: '#1a233280' }, ticks: { color: '#5d6f85', font: { size: 10 } } }
     },
-    elements: { point: { radius: 0 }, line: { borderWidth: 1.5, tension: 0.3, spanGaps: false } }
+    elements: { point: { radius: 0 }, line: { borderWidth: 2, tension: 0.3, spanGaps: false } }
 };
 
 function makeOpts(yCallback, annots, tooltipOpts) {
@@ -144,16 +211,40 @@ function tooltipWithBand(ratingFn) {
     };
 }
 
+// Custom plugin: draws a vertical gradient background (red bottom -> yellow mid -> green top)
+const qualityGradientPlugin = {
+    id: 'qualityGradient',
+    beforeDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea || !scales.y) return;
+        const { left, right, top, bottom } = chartArea;
+
+        const grad = ctx.createLinearGradient(0, bottom, 0, top);
+        grad.addColorStop(0,    'rgba(183, 28, 28, 0.40)');   // 0   - strong red
+        grad.addColorStop(0.25, 'rgba(255, 23, 68, 0.28)');   // 25  - red
+        grad.addColorStop(0.50, 'rgba(255, 160, 0, 0.22)');   // 50  - amber
+        grad.addColorStop(0.65, 'rgba(255, 160, 0, 0.12)');   // 65  - fading amber
+        grad.addColorStop(0.80, 'rgba(0, 200, 83, 0.12)');    // 80  - entering green
+        grad.addColorStop(1,    'rgba(0, 200, 83, 0.35)');    // 100 - strong green
+
+        ctx.save();
+        ctx.fillStyle = grad;
+        ctx.fillRect(left, top, right - left, bottom - top);
+        ctx.restore();
+    }
+};
+
 function initCharts() {
     charts.quality = new Chart(document.getElementById('chart-quality'), {
         type: 'line',
         data: { datasets: [{ label: 'Quality', borderColor: C.quality, backgroundColor: C.qualityBg, fill: true, data: [] }] },
+        plugins: [qualityGradientPlugin],
         options: {
             ...baseOpts,
             plugins: {
                 ...baseOpts.plugins,
                 annotation: { annotations: annotations.quality },
-                tooltip: { mode: 'index', intersect: false, ...tooltipWithBand(v => qualityBand(v)) }
+                tooltip: { ...baseOpts.plugins.tooltip, ...tooltipWithBand(v => qualityBand(v)) }
             },
             scales: { ...baseOpts.scales, y: { ...baseOpts.scales.y, min: 0, max: 100, ticks: { ...baseOpts.scales.y.ticks, callback: v => v } } }
         }
@@ -163,20 +254,20 @@ function initCharts() {
         type: 'line',
         data: { datasets: [
             { label: 'TCP', borderColor: C.download, data: [] },
-            { label: 'UDP', borderColor: '#388bfd66', borderDash: [4,4], data: [] }
+            { label: 'UDP', borderColor: C.udpDown, borderDash: [4,4], data: [] }
         ] },
         options: makeOpts(v => fmtBytes(v) + '/s', annotations.download,
-            tooltipWithBand(v => ratingDirect(v, 25*1024*1024, 5*1024*1024, 1*1024*1024)))
+            tooltipWithBand(v => ratingDirect(v, 25*1024*1024, 10*1024*1024, 3*1024*1024)))
     });
 
     charts.upload = new Chart(document.getElementById('chart-upload'), {
         type: 'line',
         data: { datasets: [
             { label: 'TCP', borderColor: C.upload, data: [] },
-            { label: 'UDP', borderColor: '#2ea04366', borderDash: [4,4], data: [] }
+            { label: 'UDP', borderColor: C.udpUp, borderDash: [4,4], data: [] }
         ] },
         options: makeOpts(v => fmtBytes(v) + '/s', annotations.upload,
-            tooltipWithBand(v => ratingDirect(v, 10*1024*1024, 2*1024*1024, 512*1024)))
+            tooltipWithBand(v => ratingDirect(v, 5*1024*1024, 2*1024*1024, 500*1024)))
     });
 
     charts.latency = new Chart(document.getElementById('chart-latency'), {
@@ -186,28 +277,28 @@ function initCharts() {
             { label: 'P95', borderColor: C.rttP95, data: [] }
         ] },
         options: makeOpts(v => v.toFixed(0) + 'ms', annotations.latency,
-            tooltipWithBand(v => ratingInverse(v, 30, 100, 200)))
+            tooltipWithBand(v => ratingInverse(v, 75, 150, 300)))
     });
 
     charts.jitter = new Chart(document.getElementById('chart-jitter'), {
         type: 'line',
         data: { datasets: [{ label: 'Jitter', borderColor: C.jitter, backgroundColor: C.jitter + '20', fill: true, data: [] }] },
         options: makeOpts(v => v.toFixed(1) + 'ms', annotations.jitter,
-            tooltipWithBand(v => ratingInverse(v, 10, 30, 50)))
+            tooltipWithBand(v => ratingInverse(v, 20, 50, 100)))
     });
 
     charts.loss = new Chart(document.getElementById('chart-loss'), {
         type: 'line',
         data: { datasets: [{ label: 'Packet Loss', borderColor: C.loss, backgroundColor: C.loss + '20', fill: true, data: [] }] },
         options: makeOpts(v => v.toFixed(1) + '%', annotations.loss,
-            tooltipWithBand(v => ratingInverse(v, 0.1, 1.0, 5.0)))
+            tooltipWithBand(v => ratingInverse(v, 1.0, 2.5, 5.0)))
     });
 
     charts.dns = new Chart(document.getElementById('chart-dns'), {
         type: 'line',
         data: { datasets: [{ label: 'DNS', borderColor: C.dns, backgroundColor: C.dns + '20', fill: true, data: [] }] },
         options: makeOpts(v => v.toFixed(0) + 'ms', annotations.dns,
-            tooltipWithBand(v => ratingInverse(v, 50, 100, 200)))
+            tooltipWithBand(v => ratingInverse(v, 50, 200, 500)))
     });
 }
 
@@ -324,11 +415,11 @@ function updateUseCases(data) {
         return;
     }
 
-    setUC('hd_video_call', down, up, rtt, jitter, loss, 3*1024*1024, 3*1024*1024, 100, 20, 0.5);
-    setUC('audio_call', down, up, rtt, jitter, loss, 100*1024, 100*1024, 150, 30, 1.0);
-    setUC('screen_sharing', down, up, rtt, jitter, loss, 1*1024*1024, 2*1024*1024, 200, 50, 2.0);
-    setUC('game_streaming', down, up, rtt, jitter, loss, 5*1024*1024, 5*1024*1024, 50, 15, 1.0);
-    setUC('4k_streaming', down, up, rtt, jitter, loss, 25*1024*1024, 0, 500, 100, 5.0);
+    setUC('hd_video_call', down, up, rtt, jitter, loss, 3.6*1024*1024, 3.2*1024*1024, 150, 30, 1.0);
+    setUC('audio_call', down, up, rtt, jitter, loss, 100*1024, 100*1024, 300, 50, 2.0);
+    setUC('screen_sharing', down, up, rtt, jitter, loss, 2*1024*1024, 3*1024*1024, 200, 50, 2.0);
+    setUC('game_streaming', down, up, rtt, jitter, loss, 5*1024*1024, 6*1024*1024, 100, 20, 1.0);
+    setUC('4k_streaming', down, up, rtt, jitter, loss, 25*1024*1024, 0, 0, 0, 5.0);
 }
 
 function setUC(id, down, up, rtt, jitter, loss, needDown, needUp, maxRTT, maxJitter, maxLoss) {
@@ -396,7 +487,7 @@ function updateDetailChart(kind, key, data) {
             scales: {
                 x: baseOpts.scales.x,
                 y: { ...baseOpts.scales.y, position: 'left', ticks: { ...baseOpts.scales.y.ticks, callback: v => fmtBytes(v) } },
-                y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#8b949e', font: { size: 10 }, callback: v => v.toFixed(0) + 'ms' } }
+                y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#5d6f85', font: { size: 10 }, callback: v => v.toFixed(0) + 'ms' } }
             }
         }
     });
@@ -443,7 +534,7 @@ function refreshCurrentTab() {
 
 function setupRefresh() {
     if (refreshInterval) clearInterval(refreshInterval);
-    const intervals = { '1h': 2000, '24h': 10000, '7d': 30000, '30d': 60000, '90d': 60000 };
+    const intervals = { '1m': 1000, '5m': 1000, '15m': 1000, '30m': 2000, '1h': 2000, '6h': 5000, '12h': 5000, '24h': 10000, '3d': 15000, '7d': 30000, '30d': 60000, '90d': 60000 };
     refreshInterval = setInterval(() => refreshCurrentTab(), intervals[currentRange] || 5000);
 }
 

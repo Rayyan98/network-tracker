@@ -25,9 +25,6 @@ type Aggregator struct {
 	// Per-key accumulators
 	byApp  map[string]*breakdownAcc
 	byDest map[string]*breakdownAcc
-
-	// Rolling window for consistency calculation
-	recentDownloads []float64 // last N seconds of download BPS
 }
 
 type breakdownAcc struct {
@@ -37,8 +34,6 @@ type breakdownAcc struct {
 	segments      int
 	retrans       int
 }
-
-const consistencyWindow = 30 // seconds
 
 func NewAggregator(flowCounter func() int) *Aggregator {
 	return &Aggregator{
@@ -157,16 +152,9 @@ func (a *Aggregator) Flush(ts int64) AggregatedSample {
 		sample.DNSMaxMs = a.dnsSamples[len(a.dnsSamples)-1]
 	}
 
-	// Update rolling download window for consistency
-	a.recentDownloads = append(a.recentDownloads, sample.DownloadBPS)
-	if len(a.recentDownloads) > consistencyWindow {
-		a.recentDownloads = a.recentDownloads[len(a.recentDownloads)-consistencyWindow:]
-	}
-
-	// Compute quality score
-	consistency := computeConsistency(a.recentDownloads)
+	// Compute quality score using ITU-T E-Model R-factor
 	sample.QualityScore = computeQualityScore(sample.DownloadBPS, sample.UploadBPS,
-		sample.RTTAvgMs, sample.JitterMs, sample.LossPct, consistency)
+		sample.RTTAvgMs, sample.JitterMs, sample.LossPct)
 	sample.UseCaseStatus = computeUseCaseStatus(sample.DownloadBPS, sample.UploadBPS,
 		sample.RTTAvgMs, sample.JitterMs, sample.LossPct)
 
@@ -226,45 +214,96 @@ func (a *Aggregator) Run(out chan<- AggregatedSample, done <-chan struct{}) {
 	}
 }
 
-// --- Quality Score ---
+// --- Quality Score: ITU-T G.107 E-Model ---
+//
+// The E-Model produces an R-factor (0-100) based on latency, jitter, and packet loss.
+// This is the industry standard used by telecom, Grafana VoIP dashboards, etc.
+//
+// R = 93.2 - Id - Ie
+//   Id = delay impairment = 0.024*d + 0.11*(d - 177.3)*H(d - 177.3)
+//     where d = one-way delay (RTT/2 + jitter buffer), H = Heaviside step
+//   Ie = equipment impairment from packet loss (codec-dependent)
+//     Ie = 0 + 30 * ln(1 + 15*e)  where e = packet loss fraction
+//
+// We then blend R with throughput adequacy to get a combined network quality score.
+//
+// R-factor interpretation:
+//   90-100 = Excellent (MOS 4.3+)
+//   80-90  = Good (MOS 4.0-4.3)
+//   70-80  = Fair (MOS 3.6-4.0)
+//   60-70  = Poor (MOS 3.1-3.6)
+//   <60    = Bad  (MOS <3.1)
 
-// computeConsistency returns 0.0 (unstable) to 1.0 (perfectly stable).
-// Based on coefficient of variation of recent download throughput.
-func computeConsistency(downloads []float64) float64 {
-	if len(downloads) < 5 {
-		return 1.0 // not enough data, assume good
+func computeRFactor(rttMs, jitterMs, lossPct float64) float64 {
+	if rttMs == 0 && lossPct == 0 {
+		return -1 // no data
 	}
-	mean := avg(downloads)
-	if mean < 1000 { // less than 1KB/s = essentially idle
-		return 1.0
+
+	// One-way delay: RTT/2 + jitter buffer (typically 2x jitter)
+	oneWayDelay := rttMs/2.0 + jitterMs*2.0
+
+	// Delay impairment (Id) — simplified G.107
+	Id := 0.024*oneWayDelay + 0.11*math.Max(0, oneWayDelay-177.3)
+
+	// Equipment/loss impairment (Ie) — G.113 annex for wideband codec
+	lossFrac := lossPct / 100.0
+	Ie := 0.0
+	if lossFrac > 0 {
+		Ie = 30.0 * math.Log(1.0+15.0*lossFrac)
 	}
-	sd := stddev(downloads)
-	cv := sd / mean // coefficient of variation
-	// cv=0 -> perfect, cv>=1 -> very unstable
-	score := 1.0 - math.Min(cv, 1.0)
-	return score
+
+	R := 93.2 - Id - Ie
+	if R < 0 {
+		R = 0
+	}
+	if R > 100 {
+		R = 100
+	}
+	return R
 }
 
-func computeQualityScore(downBPS, upBPS, rttMs, jitterMs, lossPct, consistency float64) int {
-	// Each component scores 0-100, then weighted average
-	dlScore := scoreThreshold(downBPS, 25*1024*1024, 5*1024*1024, 1*1024*1024) // 25MB, 5MB, 1MB
-	ulScore := scoreThreshold(upBPS, 10*1024*1024, 2*1024*1024, 512*1024)      // 10MB, 2MB, 512KB
-	rttScore := scoreThresholdInverse(rttMs, 30, 100, 200)                       // <30=100, >200=0
-	jitterScore := scoreThresholdInverse(jitterMs, 10, 30, 50)                   // <10=100, >50=0
-	lossScore := scoreThresholdInverse(lossPct, 0.1, 1.0, 5.0)                  // <0.1%=100, >5%=0
-	consistScore := consistency * 100
+// rFactorToMOS converts R-factor to MOS (1-5) per ITU-T G.107 Annex B.
+func rFactorToMOS(R float64) float64 {
+	if R < 0 {
+		return 1
+	}
+	if R > 100 {
+		return 4.5
+	}
+	return 1.0 + 0.035*R + R*(R-60.0)*(100.0-R)*0.0000007
+}
 
-	// If no traffic, don't penalize
-	if downBPS < 100 && upBPS < 100 {
-		// Idle - only score what we can measure (RTT, loss from whatever data we have)
-		if rttMs == 0 {
-			return -1 // no data at all
-		}
-		return clampScore(rttScore*0.4 + jitterScore*0.3 + lossScore*0.3)
+func computeQualityScore(downBPS, upBPS, rttMs, jitterMs, lossPct float64) int {
+	// R-factor from ITU E-Model (network quality: latency + jitter + loss)
+	R := computeRFactor(rttMs, jitterMs, lossPct)
+
+	// If no RTT data at all and no traffic, we have nothing to score
+	if R < 0 && downBPS < 100 && upBPS < 100 {
+		return -1
 	}
 
-	score := dlScore*0.20 + ulScore*0.15 + rttScore*0.20 + jitterScore*0.20 + lossScore*0.15 + consistScore*0.10
-	return clampScore(score)
+	// If we have RTT data but no throughput, score purely on R-factor
+	if downBPS < 100 && upBPS < 100 {
+		if R < 0 {
+			return -1
+		}
+		return clampScore(R)
+	}
+
+	// Throughput adequacy (0-100) — based on real-world recommendations
+	// 10-25 Mbps down and 5 Mbps up for good interactive experience
+	dlScore := scoreThreshold(downBPS, 25*1024*1024, 10*1024*1024, 3*1024*1024)
+	ulScore := scoreThreshold(upBPS, 5*1024*1024, 2*1024*1024, 500*1024)
+	throughputScore := dlScore*0.6 + ulScore*0.4
+
+	// If we have R-factor, blend 60% R-factor + 40% throughput
+	// R-factor covers the real-time quality; throughput covers bandwidth adequacy
+	if R >= 0 {
+		return clampScore(R*0.6 + throughputScore*0.4)
+	}
+
+	// No R-factor data but have throughput — score on throughput alone
+	return clampScore(throughputScore)
 }
 
 // scoreThreshold: higher value = better. Returns 0-100.
@@ -281,20 +320,6 @@ func scoreThreshold(val, great, ok, bad float64) float64 {
 	return 0
 }
 
-// scoreThresholdInverse: lower value = better. Returns 0-100.
-func scoreThresholdInverse(val, great, ok, bad float64) float64 {
-	if val <= great {
-		return 100
-	}
-	if val <= ok {
-		return 50 + 50*(ok-val)/(ok-great)
-	}
-	if val <= bad {
-		return 50 * (bad - val) / (bad - ok)
-	}
-	return 0
-}
-
 func clampScore(s float64) int {
 	if s < 0 {
 		return 0
@@ -307,14 +332,30 @@ func clampScore(s float64) int {
 
 // --- Use Case Status ---
 // 0 = not ready, 1 = degraded, 2 = good
+//
+// Thresholds from official platform docs + ITU standards:
+//   Latency: ITU-T G.114 — 150ms one-way = 300ms RTT max acceptable
+//   Jitter: ITU VoIP — <20ms good, >50ms bad
+//   Loss: ITU VoIP — <1% acceptable, >2.5% degraded
+//   Bandwidth: Official Zoom/Meet/Discord docs + real-world recommendations
 
 func computeUseCaseStatus(downBPS, upBPS, rttMs, jitterMs, lossPct float64) map[string]int {
 	return map[string]int{
-		"hd_video_call":  useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct, 3*1024*1024, 3*1024*1024, 100, 20, 0.5),
-		"audio_call":     useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct, 100*1024, 100*1024, 150, 30, 1.0),
-		"screen_sharing": useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct, 1*1024*1024, 2*1024*1024, 200, 50, 2.0),
-		"game_streaming": useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct, 5*1024*1024, 5*1024*1024, 50, 15, 1.0),
-		"4k_streaming":   useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct, 25*1024*1024, 0, 500, 100, 5.0),
+		// Google Meet: 3.2 Mbps out, <50ms to 8.8.8.8, up to 3.6 Mbps for 1080p
+		"hd_video_call": useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct,
+			3.6*1024*1024, 3.2*1024*1024, 150, 30, 1.0),
+		// VoIP standard: 100 Kbps, ITU G.114 <150ms one-way
+		"audio_call": useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct,
+			100*1024, 100*1024, 300, 50, 2.0),
+		// Screen sharing: 2-4 Mbps up, latency less critical
+		"screen_sharing": useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct,
+			2*1024*1024, 3*1024*1024, 200, 50, 2.0),
+		// Game streaming to Discord: needs consistent low latency + good upload
+		"game_streaming": useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct,
+			5*1024*1024, 6*1024*1024, 100, 20, 1.0),
+		// 4K streaming: Netflix/YouTube recommend 25 Mbps, latency irrelevant (buffered)
+		"4k_streaming": useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct,
+			25*1024*1024, 0, 0, 0, 5.0),
 	}
 }
 
@@ -338,21 +379,21 @@ func useCaseCheck(downBPS, upBPS, rttMs, jitterMs, lossPct float64,
 			good = false
 		}
 	}
-	if rttMs > 0 && rttMs > maxRTT {
+	if maxRTT > 0 && rttMs > 0 && rttMs > maxRTT {
 		if rttMs <= maxRTT*1.5 {
 			degraded = true
 		} else {
 			good = false
 		}
 	}
-	if jitterMs > 0 && jitterMs > maxJitter {
+	if maxJitter > 0 && jitterMs > 0 && jitterMs > maxJitter {
 		if jitterMs <= maxJitter*2 {
 			degraded = true
 		} else {
 			good = false
 		}
 	}
-	if lossPct > maxLoss {
+	if maxLoss > 0 && lossPct > maxLoss {
 		if lossPct <= maxLoss*3 {
 			degraded = true
 		} else {
