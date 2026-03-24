@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,8 +12,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rewaa/network-tracker/internal/aggregate"
 )
-
-const schemaVersion = 3
 
 type DB struct {
 	db     *sql.DB
@@ -39,153 +38,177 @@ func Open(dbPath string) (*DB, error) {
 	return &DB{db: db}, nil
 }
 
-func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+// --- Schema Migration ---
 
-		CREATE TABLE IF NOT EXISTS samples_1s (
-			ts             INTEGER NOT NULL PRIMARY KEY,
-			upload_bps     REAL NOT NULL,
-			download_bps   REAL NOT NULL,
-			rtt_avg_ms     REAL,
-			rtt_p95_ms     REAL,
-			rtt_max_ms     REAL,
-			jitter_ms      REAL,
-			loss_pct       REAL,
-			active_flows   INTEGER NOT NULL,
-			rtt_count      INTEGER NOT NULL DEFAULT 0,
-			segments       INTEGER NOT NULL DEFAULT 0,
-			retrans        INTEGER NOT NULL DEFAULT 0,
-			udp_upload_bps REAL NOT NULL DEFAULT 0,
-			udp_download_bps REAL NOT NULL DEFAULT 0,
-			dns_avg_ms     REAL,
-			dns_max_ms     REAL,
-			dns_count      INTEGER NOT NULL DEFAULT 0,
-			quality_score  INTEGER NOT NULL DEFAULT -1,
-			transfer_down_bps REAL NOT NULL DEFAULT 0,
-			transfer_up_bps   REAL NOT NULL DEFAULT 0
-		) WITHOUT ROWID;
-
-		CREATE TABLE IF NOT EXISTS samples_1m (
-			ts               INTEGER NOT NULL PRIMARY KEY,
-			upload_avg       REAL NOT NULL,
-			upload_max       REAL NOT NULL,
-			download_avg     REAL NOT NULL,
-			download_max     REAL NOT NULL,
-			rtt_avg          REAL,
-			rtt_p95          REAL,
-			rtt_max          REAL,
-			jitter_avg       REAL,
-			loss_avg         REAL,
-			loss_max         REAL,
-			active_flows_avg REAL NOT NULL,
-			sample_count     INTEGER NOT NULL,
-			udp_upload_avg   REAL NOT NULL DEFAULT 0,
-			udp_download_avg REAL NOT NULL DEFAULT 0,
-			dns_avg          REAL,
-			quality_avg      REAL,
-			transfer_down_avg REAL NOT NULL DEFAULT 0,
-			transfer_up_avg   REAL NOT NULL DEFAULT 0
-		) WITHOUT ROWID;
-
-		CREATE TABLE IF NOT EXISTS samples_1h (
-			ts               INTEGER NOT NULL PRIMARY KEY,
-			upload_avg       REAL NOT NULL,
-			upload_max       REAL NOT NULL,
-			download_avg     REAL NOT NULL,
-			download_max     REAL NOT NULL,
-			rtt_avg          REAL,
-			rtt_p95          REAL,
-			rtt_max          REAL,
-			jitter_avg       REAL,
-			loss_avg         REAL,
-			loss_max         REAL,
-			active_flows_avg REAL NOT NULL,
-			sample_count     INTEGER NOT NULL,
-			udp_upload_avg   REAL NOT NULL DEFAULT 0,
-			udp_download_avg REAL NOT NULL DEFAULT 0,
-			dns_avg          REAL,
-			quality_avg      REAL,
-			transfer_down_avg REAL NOT NULL DEFAULT 0,
-			transfer_up_avg   REAL NOT NULL DEFAULT 0
-		) WITHOUT ROWID;
-
-		CREATE TABLE IF NOT EXISTS samples_1d (
-			ts               INTEGER NOT NULL PRIMARY KEY,
-			upload_avg       REAL NOT NULL,
-			upload_max       REAL NOT NULL,
-			download_avg     REAL NOT NULL,
-			download_max     REAL NOT NULL,
-			rtt_avg          REAL,
-			rtt_p95          REAL,
-			rtt_max          REAL,
-			jitter_avg       REAL,
-			loss_avg         REAL,
-			loss_max         REAL,
-			active_flows_avg REAL NOT NULL,
-			sample_count     INTEGER NOT NULL,
-			udp_upload_avg   REAL NOT NULL DEFAULT 0,
-			udp_download_avg REAL NOT NULL DEFAULT 0,
-			dns_avg          REAL,
-			quality_avg      REAL,
-			transfer_down_avg REAL NOT NULL DEFAULT 0,
-			transfer_up_avg   REAL NOT NULL DEFAULT 0
-		) WITHOUT ROWID;
-
-		CREATE TABLE IF NOT EXISTS breakdown_1s (
-			ts        INTEGER NOT NULL,
-			kind      TEXT NOT NULL,
-			key       TEXT NOT NULL,
-			upload    REAL NOT NULL,
-			download  REAL NOT NULL,
-			rtt_avg   REAL,
-			loss_pct  REAL,
-			segments  INTEGER NOT NULL DEFAULT 0,
-			retrans   INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (ts, kind, key)
-		) WITHOUT ROWID;
-
-		CREATE TABLE IF NOT EXISTS breakdown_1m (
-			ts        INTEGER NOT NULL,
-			kind      TEXT NOT NULL,
-			key       TEXT NOT NULL,
-			upload    REAL NOT NULL,
-			download  REAL NOT NULL,
-			rtt_avg   REAL,
-			loss_pct  REAL,
-			segments  INTEGER NOT NULL DEFAULT 0,
-			retrans   INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (ts, kind, key)
-		) WITHOUT ROWID;
-
-		CREATE TABLE IF NOT EXISTS breakdown_1h (
-			ts        INTEGER NOT NULL,
-			kind      TEXT NOT NULL,
-			key       TEXT NOT NULL,
-			upload    REAL NOT NULL,
-			download  REAL NOT NULL,
-			rtt_avg   REAL,
-			loss_pct  REAL,
-			segments  INTEGER NOT NULL DEFAULT 0,
-			retrans   INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (ts, kind, key)
-		) WITHOUT ROWID;
-
-		CREATE INDEX IF NOT EXISTS idx_breakdown_1s_kind ON breakdown_1s(kind, ts);
-		CREATE INDEX IF NOT EXISTS idx_breakdown_1m_kind ON breakdown_1m(kind, ts);
-		CREATE INDEX IF NOT EXISTS idx_breakdown_1h_kind ON breakdown_1h(kind, ts);
-	`)
+func getSchemaVersion(db *sql.DB) int {
+	var v int
+	err := db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&v)
 	if err != nil {
-		return fmt.Errorf("creating tables: %w", err)
+		return 0
+	}
+	return v
+}
+
+func setSchemaVersion(db *sql.DB, v int) {
+	db.Exec("DELETE FROM schema_version")
+	db.Exec("INSERT INTO schema_version (version) VALUES (?)", v)
+}
+
+func migrate(db *sql.DB) error {
+	// Ensure schema_version table exists
+	db.Exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+
+	version := getSchemaVersion(db)
+
+	if version < 4 {
+		// Fresh install or upgrading from old version — recreate all tables
+		// Drop old tables if they exist (clean slate for major schema change)
+		for _, t := range []string{"samples_1s", "samples_1m", "samples_1h", "samples_1d",
+			"breakdown_1s", "breakdown_1m", "breakdown_1h"} {
+			db.Exec("DROP TABLE IF EXISTS " + t)
+		}
+
+		if err := createTablesV4(db); err != nil {
+			return err
+		}
+		setSchemaVersion(db, 4)
+		log.Println("Database schema created (v4)")
 	}
 
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM schema_version").Scan(&count)
-	if count == 0 {
-		db.Exec("INSERT INTO schema_version (version) VALUES (?)", schemaVersion)
-	}
 	return nil
 }
+
+func createTablesV4(db *sql.DB) error {
+	// 1-second samples: per-second metrics with full percentile breakdowns
+	// RTT and DNS have multiple percentiles computed from N samples within that second
+	// Jitter and loss are single values per second
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS samples_1s (
+			ts               INTEGER NOT NULL PRIMARY KEY,
+			-- Throughput
+			upload_bps       REAL NOT NULL,
+			download_bps     REAL NOT NULL,
+			udp_upload_bps   REAL NOT NULL DEFAULT 0,
+			udp_download_bps REAL NOT NULL DEFAULT 0,
+			-- Transfer speed (link capacity from burst measurement)
+			transfer_down_bps REAL NOT NULL DEFAULT 0,
+			transfer_up_bps   REAL NOT NULL DEFAULT 0,
+			-- RTT percentiles (from N RTT samples in this second)
+			rtt_min          REAL,
+			rtt_avg          REAL,
+			rtt_p50          REAL,
+			rtt_p90          REAL,
+			rtt_p95          REAL,
+			rtt_p99          REAL,
+			rtt_max          REAL,
+			rtt_count        INTEGER NOT NULL DEFAULT 0,
+			-- Jitter (stddev of RTT samples, single value per second)
+			jitter           REAL,
+			-- Packet loss (rate for this second)
+			loss_pct         REAL,
+			segments         INTEGER NOT NULL DEFAULT 0,
+			retrans          INTEGER NOT NULL DEFAULT 0,
+			-- DNS percentiles (from N DNS samples in this second)
+			dns_min          REAL,
+			dns_avg          REAL,
+			dns_p50          REAL,
+			dns_p90          REAL,
+			dns_p95          REAL,
+			dns_p99          REAL,
+			dns_max          REAL,
+			dns_count        INTEGER NOT NULL DEFAULT 0,
+			-- Quality
+			quality_score    INTEGER NOT NULL DEFAULT -1,
+			active_flows     INTEGER NOT NULL
+		) WITHOUT ROWID;
+	`)
+	if err != nil {
+		return fmt.Errorf("creating samples_1s: %w", err)
+	}
+
+	// Aggregated tables: store the same percentile set.
+	// Values are computed from the finer-granularity table:
+	//   min = MIN(min), avg = AVG(avg), p50 = AVG(p50), etc., max = MAX(max)
+	for _, table := range []string{"samples_1m", "samples_1h", "samples_1d"} {
+		_, err := db.Exec(fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS %s (
+				ts               INTEGER NOT NULL PRIMARY KEY,
+				-- Throughput
+				upload_avg       REAL NOT NULL,
+				upload_max       REAL NOT NULL,
+				download_avg     REAL NOT NULL,
+				download_max     REAL NOT NULL,
+				udp_upload_avg   REAL NOT NULL DEFAULT 0,
+				udp_download_avg REAL NOT NULL DEFAULT 0,
+				-- Transfer speed
+				transfer_down_avg REAL NOT NULL DEFAULT 0,
+				transfer_up_avg   REAL NOT NULL DEFAULT 0,
+				-- RTT percentiles (aggregated from finer table)
+				rtt_min          REAL,
+				rtt_avg          REAL,
+				rtt_p50          REAL,
+				rtt_p90          REAL,
+				rtt_p95          REAL,
+				rtt_p99          REAL,
+				rtt_max          REAL,
+				-- Jitter (aggregated from per-second jitter values)
+				jitter_min       REAL,
+				jitter_avg       REAL,
+				jitter_p95       REAL,
+				jitter_max       REAL,
+				-- Loss (aggregated from per-second loss rates)
+				loss_min         REAL,
+				loss_avg         REAL,
+				loss_p95         REAL,
+				loss_max         REAL,
+				-- DNS percentiles
+				dns_min          REAL,
+				dns_avg          REAL,
+				dns_p50          REAL,
+				dns_p90          REAL,
+				dns_p95          REAL,
+				dns_p99          REAL,
+				dns_max          REAL,
+				-- Quality
+				quality_min      REAL,
+				quality_avg      REAL,
+				quality_max      REAL,
+				-- Meta
+				active_flows_avg REAL NOT NULL,
+				sample_count     INTEGER NOT NULL
+			) WITHOUT ROWID;
+		`, table))
+		if err != nil {
+			return fmt.Errorf("creating %s: %w", table, err)
+		}
+	}
+
+	// Breakdown tables (per-app, per-destination)
+	for _, table := range []string{"breakdown_1s", "breakdown_1m", "breakdown_1h"} {
+		_, err := db.Exec(fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS %s (
+				ts        INTEGER NOT NULL,
+				kind      TEXT NOT NULL,
+				key       TEXT NOT NULL,
+				upload    REAL NOT NULL,
+				download  REAL NOT NULL,
+				rtt_avg   REAL,
+				loss_pct  REAL,
+				segments  INTEGER NOT NULL DEFAULT 0,
+				retrans   INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (ts, kind, key)
+			) WITHOUT ROWID;
+			CREATE INDEX IF NOT EXISTS idx_%s_kind ON %s(kind, ts);
+		`, table, table, table))
+		if err != nil {
+			return fmt.Errorf("creating %s: %w", table, err)
+		}
+	}
+
+	return nil
+}
+
+// --- Write ---
 
 // WriteSample buffers a sample for batch writing.
 func (d *DB) WriteSample(s aggregate.AggregatedSample) {
@@ -212,11 +235,13 @@ func (d *DB) FlushBuffer() error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO samples_1s
-		(ts, upload_bps, download_bps, rtt_avg_ms, rtt_p95_ms, rtt_max_ms, jitter_ms,
-		 loss_pct, active_flows, rtt_count, segments, retrans,
-		 udp_upload_bps, udp_download_bps, dns_avg_ms, dns_max_ms, dns_count, quality_score,
-		 transfer_down_bps, transfer_up_bps)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(ts, upload_bps, download_bps, udp_upload_bps, udp_download_bps,
+		 transfer_down_bps, transfer_up_bps,
+		 rtt_min, rtt_avg, rtt_p50, rtt_p90, rtt_p95, rtt_p99, rtt_max, rtt_count,
+		 jitter, loss_pct, segments, retrans,
+		 dns_min, dns_avg, dns_p50, dns_p90, dns_p95, dns_p99, dns_max, dns_count,
+		 quality_score, active_flows)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -231,25 +256,20 @@ func (d *DB) FlushBuffer() error {
 	defer bdStmt.Close()
 
 	for _, s := range samples {
-		var rttAvg, rttP95, rttMax, jitter, lossPct, dnsAvg, dnsMax *float64
-		if s.RTTCount > 0 {
-			rttAvg = &s.RTTAvgMs
-			rttP95 = &s.RTTP95Ms
-			rttMax = &s.RTTMaxMs
-			jitter = &s.JitterMs
-		}
-		if s.Segments > 0 {
-			lossPct = &s.LossPct
-		}
-		if s.DNSCount > 0 {
-			dnsAvg = &s.DNSAvgMs
-			dnsMax = &s.DNSMaxMs
-		}
-		_, err := stmt.Exec(s.Timestamp, s.UploadBPS, s.DownloadBPS,
-			rttAvg, rttP95, rttMax, jitter, lossPct,
-			s.ActiveFlows, s.RTTCount, s.Segments, s.Retrans,
-			s.UDPUploadBPS, s.UDPDownloadBPS, dnsAvg, dnsMax, s.DNSCount,
-			s.QualityScore, s.TransferDownBPS, s.TransferUpBPS)
+		_, err := stmt.Exec(s.Timestamp,
+			s.UploadBPS, s.DownloadBPS, s.UDPUploadBPS, s.UDPDownloadBPS,
+			s.TransferDownBPS, s.TransferUpBPS,
+			nilIfZeroCount(s.RTT.Min, s.RTT.Count), nilIfZeroCount(s.RTT.Avg, s.RTT.Count),
+			nilIfZeroCount(s.RTT.P50, s.RTT.Count), nilIfZeroCount(s.RTT.P90, s.RTT.Count),
+			nilIfZeroCount(s.RTT.P95, s.RTT.Count), nilIfZeroCount(s.RTT.P99, s.RTT.Count),
+			nilIfZeroCount(s.RTT.Max, s.RTT.Count), s.RTT.Count,
+			nilIfZeroCount(s.JitterMs, s.RTT.Count),
+			nilIfZeroSegments(s.LossPct, s.Segments), s.Segments, s.Retrans,
+			nilIfZeroCount(s.DNS.Min, s.DNS.Count), nilIfZeroCount(s.DNS.Avg, s.DNS.Count),
+			nilIfZeroCount(s.DNS.P50, s.DNS.Count), nilIfZeroCount(s.DNS.P90, s.DNS.Count),
+			nilIfZeroCount(s.DNS.P95, s.DNS.Count), nilIfZeroCount(s.DNS.P99, s.DNS.Count),
+			nilIfZeroCount(s.DNS.Max, s.DNS.Count), s.DNS.Count,
+			s.QualityScore, s.ActiveFlows)
 		if err != nil {
 			return err
 		}
@@ -259,6 +279,20 @@ func (d *DB) FlushBuffer() error {
 	}
 
 	return tx.Commit()
+}
+
+func nilIfZeroCount(val float64, count int) *float64 {
+	if count == 0 {
+		return nil
+	}
+	return &val
+}
+
+func nilIfZeroSegments(val float64, segments int) *float64 {
+	if segments == 0 {
+		return nil
+	}
+	return &val
 }
 
 // RunWriter periodically flushes the buffer to disk.

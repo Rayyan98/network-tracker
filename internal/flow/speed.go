@@ -83,17 +83,20 @@ func (s *speedTracker) finalizeBurst() {
 	}
 }
 
-// DrainSpeeds returns accumulated burst speeds and resets.
-// Also finalizes any in-progress burst.
+// DrainSpeeds returns accumulated completed burst speeds and resets.
+// Does NOT finalize in-progress bursts — those continue accumulating.
 func (s *speedTracker) DrainSpeeds() (downloadSpeeds, uploadSpeeds []float64) {
-	if s.inBurst {
-		s.finalizeBurst()
-		s.inBurst = false
-	}
-
 	dl := s.downloadSpeeds
 	ul := s.uploadSpeeds
 	s.downloadSpeeds = nil
 	s.uploadSpeeds = nil
 	return dl, ul
+}
+
+// FlushBurst finalizes any in-progress burst (called once per second by aggregator).
+func (s *speedTracker) FlushBurst() {
+	if s.inBurst {
+		s.finalizeBurst()
+		s.inBurst = false
+	}
 }

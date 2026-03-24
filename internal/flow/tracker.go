@@ -105,7 +105,6 @@ func (t *Tracker) Process(pkt capture.Packet) MetricSample {
 		}
 		fs.lastSeen = pkt.Timestamp
 		fs.speed.RecordData(pkt.Timestamp, sample.UploadBytes, sample.DownloadBytes)
-		sample.DownloadSpeeds, sample.UploadSpeeds = fs.speed.DrainSpeeds()
 		t.mu.Unlock()
 		return sample
 	}
@@ -174,9 +173,22 @@ func (t *Tracker) Process(pkt capture.Packet) MetricSample {
 	if pkt.PayloadLen > 0 {
 		fs.speed.RecordData(pkt.Timestamp, sample.UploadBytes, sample.DownloadBytes)
 	}
-	sample.DownloadSpeeds, sample.UploadSpeeds = fs.speed.DrainSpeeds()
 
 	return sample
+}
+
+// DrainAllSpeeds flushes and collects burst speeds from all flows.
+// Called once per second by the aggregator.
+func (t *Tracker) DrainAllSpeeds() (dlSpeeds, ulSpeeds []float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, fs := range t.flows {
+		fs.speed.FlushBurst()
+		dl, ul := fs.speed.DrainSpeeds()
+		dlSpeeds = append(dlSpeeds, dl...)
+		ulSpeeds = append(ulSpeeds, ul...)
+	}
+	return
 }
 
 // trackDNS matches DNS queries and responses to measure latency.

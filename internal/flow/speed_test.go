@@ -14,6 +14,7 @@ func TestSpeedTrackerBurst(t *testing.T) {
 		st.RecordData(t0.Add(time.Duration(i)*time.Millisecond), 0, 10000)
 	}
 
+	st.FlushBurst() // finalize the in-progress burst
 	dl, ul := st.DrainSpeeds()
 	if len(ul) != 0 {
 		t.Errorf("expected no upload speeds, got %d", len(ul))
@@ -21,8 +22,6 @@ func TestSpeedTrackerBurst(t *testing.T) {
 	if len(dl) != 1 {
 		t.Fatalf("expected 1 download burst, got %d", len(dl))
 	}
-
-	// ~10 MB/s (1M bytes / 0.099s)
 	if dl[0] < 5e6 || dl[0] > 15e6 {
 		t.Errorf("expected ~10 MB/s, got %.0f", dl[0])
 	}
@@ -43,6 +42,7 @@ func TestSpeedTrackerMultipleBursts(t *testing.T) {
 		st.RecordData(t1.Add(time.Duration(i)*time.Millisecond), 0, 10000)
 	}
 
+	st.FlushBurst()
 	dl, _ := st.DrainSpeeds()
 	if len(dl) != 2 {
 		t.Errorf("expected 2 bursts, got %d", len(dl))
@@ -53,10 +53,10 @@ func TestSpeedTrackerShortBurstIgnored(t *testing.T) {
 	st := newSpeedTracker()
 	t0 := time.Now()
 
-	// Single packet "burst" — less than 10ms, should be ignored
 	st.RecordData(t0, 0, 1000)
 	st.RecordData(t0.Add(5*time.Millisecond), 0, 1000)
 
+	st.FlushBurst()
 	dl, _ := st.DrainSpeeds()
 	if len(dl) != 0 {
 		t.Errorf("expected no bursts for <10ms duration, got %d", len(dl))
@@ -71,12 +71,12 @@ func TestSpeedTrackerDrainResets(t *testing.T) {
 		st.RecordData(t0.Add(time.Duration(i)*time.Millisecond), 1000, 0)
 	}
 
+	st.FlushBurst()
 	_, ul1 := st.DrainSpeeds()
 	if len(ul1) == 0 {
 		t.Fatal("expected upload speeds from first drain")
 	}
 
-	// Second drain should be empty
 	_, ul2 := st.DrainSpeeds()
 	if len(ul2) != 0 {
 		t.Errorf("expected no speeds after second drain, got %d", len(ul2))

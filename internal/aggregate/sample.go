@@ -1,42 +1,53 @@
 package aggregate
 
+// Percentiles holds the full percentile breakdown for a metric.
+type Percentiles struct {
+	Min   float64
+	Avg   float64
+	P50   float64
+	P90   float64
+	P95   float64
+	P99   float64
+	Max   float64
+	Count int
+}
+
 // AggregatedSample represents metrics for a single time bucket.
 type AggregatedSample struct {
-	Timestamp   int64   // Unix timestamp (bucket boundary)
-	UploadBPS   float64 // bytes per second (TCP + UDP)
-	DownloadBPS float64 // bytes per second (TCP + UDP)
-	RTTAvgMs    float64 // average RTT in milliseconds (0 if no samples)
-	RTTP95Ms    float64 // p95 RTT in milliseconds
-	RTTMaxMs    float64 // max RTT in milliseconds
-	JitterMs    float64 // RTT jitter (std deviation of RTT samples)
-	LossPct     float64 // packet loss percentage (0-100)
-	ActiveFlows int
-	RTTCount    int // number of RTT samples (0 means no RTT data)
-	Segments    int // total TCP data segments
-	Retrans     int // retransmitted TCP segments
+	Timestamp   int64
+	UploadBPS   float64
+	DownloadBPS float64
 
-	// UDP metrics
+	// UDP subset of throughput
 	UDPUploadBPS   float64
 	UDPDownloadBPS float64
 
-	// DNS
-	DNSAvgMs float64 // average DNS resolution time in ms
-	DNSMaxMs float64
-	DNSCount int
+	// Transfer speed (link capacity from burst measurement)
+	TransferDownBPS float64
+	TransferUpBPS   float64
 
-	// Transfer speed: actual speed data moves at during bursts (bytes/sec)
-	// This is different from throughput — it measures link capacity when active.
-	TransferDownBPS float64 // p90 download burst speed
-	TransferUpBPS   float64 // p90 upload burst speed
-	TransferCount   int     // number of burst samples
+	// RTT percentiles (from N RTT samples in this second)
+	RTT Percentiles
+
+	// Jitter (stddev of RTT samples — single value per second)
+	JitterMs float64
+
+	// Packet loss
+	LossPct  float64
+	Segments int
+	Retrans  int
+
+	// DNS percentiles (from N DNS samples in this second)
+	DNS Percentiles
 
 	// Quality
-	QualityScore  int            // 0-100 composite score
-	UseCaseStatus map[string]int // use case name -> status (0=bad, 1=degraded, 2=good)
+	QualityScore  int
+	UseCaseStatus map[string]int
+	ActiveFlows   int
 
-	// Per-key breakdowns (populated during flush)
-	ByApp  map[string]*Breakdown // process name -> metrics
-	ByDest map[string]*Breakdown // remote IP -> metrics
+	// Per-key breakdowns
+	ByApp  map[string]*Breakdown
+	ByDest map[string]*Breakdown
 }
 
 // Breakdown holds metrics for a single app or destination within a time bucket.

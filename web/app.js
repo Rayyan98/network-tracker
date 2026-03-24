@@ -255,7 +255,7 @@ function initCharts() {
         data: { datasets: [
             { label: 'TCP', borderColor: C.download, data: [] },
             { label: 'UDP', borderColor: C.udpDown, borderDash: [4,4], data: [] },
-            { label: 'Link Speed', borderColor: '#fff', borderWidth: 1, borderDash: [2,3], pointRadius: 0, data: [] }
+            { label: 'Link Speed', borderColor: '#fff', borderWidth: 0, pointRadius: 2, pointBackgroundColor: '#fff', showLine: false, data: [] }
         ] },
         options: makeOpts(v => fmtBytes(v) + '/s', annotations.download,
             tooltipWithBand(v => ratingDirect(v, 25*1024*1024, 10*1024*1024, 3*1024*1024)))
@@ -266,7 +266,7 @@ function initCharts() {
         data: { datasets: [
             { label: 'TCP', borderColor: C.upload, data: [] },
             { label: 'UDP', borderColor: C.udpUp, borderDash: [4,4], data: [] },
-            { label: 'Link Speed', borderColor: '#fff', borderWidth: 1, borderDash: [2,3], pointRadius: 0, data: [] }
+            { label: 'Link Speed', borderColor: '#fff', borderWidth: 0, pointRadius: 2, pointBackgroundColor: '#fff', showLine: false, data: [] }
         ] },
         options: makeOpts(v => fmtBytes(v) + '/s', annotations.upload,
             tooltipWithBand(v => ratingDirect(v, 5*1024*1024, 2*1024*1024, 500*1024)))
@@ -366,30 +366,51 @@ function updateOverview(data) {
     charts.upload.data.datasets[2].data = data.map((d, i) => ({ x: ts[i], y: d.transfer_up_avg > 0 ? d.transfer_up_avg : null }));
     charts.upload.update();
 
-    // Latency/jitter/loss/DNS: null when no data (not 0 — 0 would mean "perfect")
-    charts.latency.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.rtt_avg != null ? d.rtt_avg : null }));
-    charts.latency.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: d.rtt_p95 != null ? d.rtt_p95 : null }));
+    // Read selected measures from dropdowns
+    const rttMeasure = document.getElementById('measure-latency').value;
+    const jitterMeasure = document.getElementById('measure-jitter').value;
+    const lossMeasure = document.getElementById('measure-loss').value;
+    const dnsMeasure = document.getElementById('measure-dns').value;
+
+    // Helper: get field from data point, return null if missing
+    const getField = (d, field) => d[field] != null ? d[field] : null;
+
+    // Latency: show selected measure as primary line, plus a secondary reference
+    charts.latency.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: getField(d, rttMeasure) }));
+    // Show avg as faded reference line if not already selected
+    const rttRef = rttMeasure === 'rtt_avg' ? 'rtt_p95' : 'rtt_avg';
+    charts.latency.data.datasets[1].data = data.map((d, i) => ({ x: ts[i], y: getField(d, rttRef) }));
+    charts.latency.data.datasets[0].label = rttMeasure.replace('rtt_', '').toUpperCase();
+    charts.latency.data.datasets[1].label = rttRef.replace('rtt_', '').toUpperCase();
     charts.latency.update();
 
-    charts.jitter.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.jitter_avg != null ? d.jitter_avg : null }));
+    charts.jitter.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: getField(d, jitterMeasure) }));
+    charts.jitter.data.datasets[0].label = jitterMeasure.replace('jitter_', '').toUpperCase();
     charts.jitter.update();
 
-    charts.loss.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.loss_avg != null ? d.loss_avg : null }));
+    charts.loss.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: getField(d, lossMeasure) }));
+    charts.loss.data.datasets[0].label = lossMeasure.replace('loss_', '').toUpperCase();
     charts.loss.update();
 
-    charts.dns.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: d.dns_avg != null ? d.dns_avg : null }));
+    charts.dns.data.datasets[0].data = data.map((d, i) => ({ x: ts[i], y: getField(d, dnsMeasure) }));
+    charts.dns.data.datasets[0].label = dnsMeasure.replace('dns_', '').toUpperCase();
     charts.dns.update();
 
-    // Current values
+    // Current values — show the selected measure
     const L = data[data.length - 1];
     document.getElementById('download-value').innerHTML = fmtSpeed(L.download_avg || 0);
     document.getElementById('upload-value').innerHTML = fmtSpeed(L.upload_avg || 0);
     document.getElementById('transfer-down-value').innerHTML = L.transfer_down_avg > 0 ? fmtSpeed(L.transfer_down_avg) : '--';
     document.getElementById('transfer-up-value').innerHTML = L.transfer_up_avg > 0 ? fmtSpeed(L.transfer_up_avg) : '--';
-    document.getElementById('latency-value').innerHTML = (L.rtt_avg ? L.rtt_avg.toFixed(1) : '--') + ' <span class="unit">ms</span>';
-    document.getElementById('jitter-value').innerHTML = (L.jitter_avg ? L.jitter_avg.toFixed(1) : '--') + ' <span class="unit">ms</span>';
-    document.getElementById('loss-value').innerHTML = (L.loss_avg != null ? L.loss_avg.toFixed(2) : '--') + ' <span class="unit">%</span>';
-    document.getElementById('dns-value').innerHTML = (L.dns_avg ? L.dns_avg.toFixed(0) : '--') + ' <span class="unit">ms</span>';
+
+    const latVal = getField(L, rttMeasure);
+    document.getElementById('latency-value').innerHTML = (latVal != null ? latVal.toFixed(1) : '--') + ' <span class="unit">ms</span>';
+    const jitVal = getField(L, jitterMeasure);
+    document.getElementById('jitter-value').innerHTML = (jitVal != null ? jitVal.toFixed(1) : '--') + ' <span class="unit">ms</span>';
+    const lossVal = getField(L, lossMeasure);
+    document.getElementById('loss-value').innerHTML = (lossVal != null ? lossVal.toFixed(2) : '--') + ' <span class="unit">%</span>';
+    const dnsVal = getField(L, dnsMeasure);
+    document.getElementById('dns-value').innerHTML = (dnsVal != null ? dnsVal.toFixed(0) : '--') + ' <span class="unit">ms</span>';
 
     updateQualityDisplay(L.quality_avg);
 }
@@ -556,4 +577,8 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => setRange(btn.dataset.range)));
     document.querySelectorAll('.tab').forEach(tab =>
         tab.addEventListener('click', () => setTab(tab.dataset.tab)));
+
+    // Measure dropdowns: re-render charts on change (uses cached data via fetchMetrics)
+    document.querySelectorAll('.measure-select').forEach(sel =>
+        sel.addEventListener('change', () => fetchMetrics()));
 });

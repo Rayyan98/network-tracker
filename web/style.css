@@ -216,6 +216,37 @@ h1 {
     padding: 16px;
 }
 
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.panel-header h2 {
+    margin-bottom: 0;
+}
+
+.measure-select {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.75em;
+    cursor: pointer;
+    outline: none;
+}
+
+.measure-select:hover {
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+}
+
+.measure-select:focus {
+    border-color: var(--accent-blue);
+}
+
 .panel h2 {
     font-size: 0.85em;
     color: var(--text-muted);

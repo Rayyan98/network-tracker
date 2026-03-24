@@ -45,7 +45,7 @@ func main() {
 
 	// Create components
 	tracker := flow.NewTracker()
-	agg := aggregate.NewAggregator(tracker.ActiveFlows)
+	agg := aggregate.NewAggregator(tracker.ActiveFlows, tracker.DrainAllSpeeds)
 	procMapper := procnet.NewMapper()
 	resolver := resolve.NewResolver()
 

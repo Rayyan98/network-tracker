@@ -73,32 +73,70 @@
             <div class="panel">
                 <h2>Download</h2>
                 <div class="current-value" id="download-value">-- <span class="unit">Mbps</span></div>
-                <div class="sub-value">Link speed: <span id="transfer-down-value">--</span></div>
+                <div class="sub-value" id="transfer-down-row" style="display:none">Link speed: <span id="transfer-down-value">--</span></div>
                 <canvas id="chart-download"></canvas>
             </div>
             <div class="panel">
                 <h2>Upload</h2>
                 <div class="current-value" id="upload-value">-- <span class="unit">Mbps</span></div>
-                <div class="sub-value">Link speed: <span id="transfer-up-value">--</span></div>
+                <div class="sub-value" id="transfer-up-row" style="display:none">Link speed: <span id="transfer-up-value">--</span></div>
                 <canvas id="chart-upload"></canvas>
             </div>
             <div class="panel">
-                <h2>Latency (RTT)</h2>
+                <div class="panel-header">
+                    <h2>Latency (RTT)</h2>
+                    <select class="measure-select" id="measure-latency">
+                        <option value="rtt_p95" selected>P95</option>
+                        <option value="rtt_avg">Avg</option>
+                        <option value="rtt_p50">P50</option>
+                        <option value="rtt_p90">P90</option>
+                        <option value="rtt_p99">P99</option>
+                        <option value="rtt_max">Max</option>
+                        <option value="rtt_min">Min</option>
+                    </select>
+                </div>
                 <div class="current-value" id="latency-value">-- <span class="unit">ms</span></div>
                 <canvas id="chart-latency"></canvas>
             </div>
             <div class="panel">
-                <h2>Jitter</h2>
+                <div class="panel-header">
+                    <h2>Jitter</h2>
+                    <select class="measure-select" id="measure-jitter">
+                        <option value="jitter_p95" selected>P95</option>
+                        <option value="jitter_avg">Avg</option>
+                        <option value="jitter_max">Max</option>
+                        <option value="jitter_min">Min</option>
+                    </select>
+                </div>
                 <div class="current-value" id="jitter-value">-- <span class="unit">ms</span></div>
                 <canvas id="chart-jitter"></canvas>
             </div>
             <div class="panel">
-                <h2>Packet Loss</h2>
+                <div class="panel-header">
+                    <h2>Packet Loss</h2>
+                    <select class="measure-select" id="measure-loss">
+                        <option value="loss_avg" selected>Avg</option>
+                        <option value="loss_p95">P95</option>
+                        <option value="loss_max">Max</option>
+                        <option value="loss_min">Min</option>
+                    </select>
+                </div>
                 <div class="current-value" id="loss-value">-- <span class="unit">%</span></div>
                 <canvas id="chart-loss"></canvas>
             </div>
             <div class="panel">
-                <h2>DNS Resolution</h2>
+                <div class="panel-header">
+                    <h2>DNS Resolution</h2>
+                    <select class="measure-select" id="measure-dns">
+                        <option value="dns_p95" selected>P95</option>
+                        <option value="dns_avg">Avg</option>
+                        <option value="dns_p50">P50</option>
+                        <option value="dns_p90">P90</option>
+                        <option value="dns_p99">P99</option>
+                        <option value="dns_max">Max</option>
+                        <option value="dns_min">Min</option>
+                    </select>
+                </div>
                 <div class="current-value" id="dns-value">-- <span class="unit">ms</span></div>
                 <canvas id="chart-dns"></canvas>
             </div>
